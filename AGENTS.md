@@ -14,13 +14,13 @@ _Last synced: 2026-10-24T16:07:10.297Z._
 
 #### Workspace MCP
 
-- `/Users/sharadbagal/gen_ai_apps/agent_factory/.mcp.json` _(workspace: agent_factory)_ — _file missing_
+- `./.mcp.json` _(workspace: agent_factory)_ — _file missing_
 
 _No active workspace servers in mcp.json._
 
 #### User MCP
 
-- `/Users/sharadbagal/.Codex.json` — _no servers defined_
+- `~/.Codex.json` — _no servers defined_
 
 _No active user-scoped servers in mcp.json._
 

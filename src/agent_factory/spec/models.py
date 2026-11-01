@@ -111,7 +111,16 @@ class WorkflowStep(_Strict):
     prompt: str | None = Field(
         None, max_length=20_000, description="Template; supports {{input.x}} and {{steps.<id>.output}}."
     )
-    structured: bool = Field(False, description="Request output conforming to spec.outputs.")
+    structured: bool = Field(False, description="Request output conforming to spec.outputs (or output_schema).")
+    output_schema: dict[str, Any] | None = Field(None, description="Per-step JSON Schema for structured output.")
+    foreach: str | None = Field(
+        None,
+        description="model steps: template resolving to a list; the step runs once per item ({{ item.<field> }}); "
+        "item.text is supplied to the model as untrusted content.",
+    )
+    include_steps: list[str] | None = Field(
+        None, description="Earlier steps whose outputs enter this step's context (default: all; foreach: none)."
+    )
     tools: list[str] | None = Field(None, description="agent_loop: subset of the agent's tools (default all).")
     max_iterations: int = Field(6, ge=1, le=50)
     # tool
@@ -141,6 +150,8 @@ class WorkflowStep(_Strict):
         for field in required.get(self.kind, []):
             if not getattr(self, field):
                 raise ValueError(f"step '{self.id}' of kind '{self.kind}' requires '{field}'")
+        if self.foreach and self.kind != "model":
+            raise ValueError(f"step '{self.id}': foreach is only supported on model steps")
         if self.agent and not AGENT_REF_RE.match(self.agent):
             raise ValueError(f"step '{self.id}': invalid agent reference '{self.agent}'")
         return self

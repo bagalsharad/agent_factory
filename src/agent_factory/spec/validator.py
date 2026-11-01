@@ -289,6 +289,18 @@ class SpecValidator:
                 report.error(path, f"validate target '{step.target}' must be an earlier step", "workflow.bad_target")
             if step.kind == "validate" and not any(s.kind in {"model", "agent_loop"} for s in steps[:i]):
                 report.error(path, "validate step has no earlier model step to validate", "workflow.bad_target")
+            if step.output_schema is not None:
+                try:
+                    validator_for(step.output_schema).check_schema(step.output_schema)
+                except jsonschema.SchemaError as exc:
+                    report.error(path, f"output_schema is not valid JSON Schema: {exc.message}", "schema.invalid")
+            for ref in step.include_steps or []:
+                if ref not in ids[:i]:
+                    report.error(
+                        path,
+                        f"include_steps references '{ref}' which does not precede this step",
+                        "workflow.bad_reference",
+                    )
             if step.kind == "retrieve" and not spec.spec.memory.knowledge.enabled:
                 report.error(path, "retrieve step requires memory.knowledge.enabled", "workflow.knowledge_disabled")
             for ref in _template_refs(step.model_dump(mode="json")):

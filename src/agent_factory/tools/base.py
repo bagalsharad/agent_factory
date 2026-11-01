@@ -51,6 +51,7 @@ class ToolDefinition(BaseModel):
     action_class: str | None = None
     network: bool = False
     requires_sandbox: bool = False
+    max_output_chars: int = 60_000
     audit: AuditConfig = Field(default_factory=AuditConfig)
     source: str = "builtin"
 
@@ -104,6 +105,7 @@ class Tool(ABC):
     permissions: ClassVar[list[str]] = ["tools:invoke"]
     audit: ClassVar[AuditConfig] = AuditConfig()
     version: ClassVar[str] = "1.0.0"
+    max_output_chars: ClassVar[int] = 60_000
 
     @property
     def definition(self) -> ToolDefinition:
@@ -124,6 +126,7 @@ class Tool(ABC):
             action_class=self.action_class,
             network=self.network,
             requires_sandbox=self.requires_sandbox,
+            max_output_chars=self.max_output_chars,
             audit=self.audit,
         )
 

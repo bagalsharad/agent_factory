@@ -457,13 +457,15 @@ class GovernedHarness(Harness):
 
     # ================================================================== context helpers
     def _context_inputs(
-        self, ctx: ExecutionContext, state: dict[str, Any], upto: str
+        self, ctx: ExecutionContext, state: dict[str, Any], upto: str, include: list[str] | None = None
     ) -> tuple[list[ContextBlock], list[dict[str, Any]]]:
         blocks: list[ContextBlock] = []
         documents: list[dict[str, Any]] = []
         for step in ctx.spec.spec.workflow.steps:
             if step.id == upto:
                 break
+            if include is not None and step.id not in include:
+                continue
             result = state.get("steps", {}).get(step.id)
             if not result or result.get("status") not in {"completed", "rejected", "failed"}:
                 continue
@@ -509,8 +511,15 @@ class GovernedHarness(Harness):
         step: WorkflowStep,
         schema: dict[str, Any] | None,
         default_prompt: str,
+        *,
+        include: list[str] | None = None,
+        extra_documents: list[dict[str, Any]] | None = None,
+        scope_extra: dict[str, Any] | None = None,
     ) -> list[ChatMessage]:
-        blocks, documents = self._context_inputs(ctx, state, step.id)
+        blocks, documents = self._context_inputs(
+            ctx, state, step.id, include if include is not None else step.include_steps
+        )
+        documents = [*documents, *(extra_documents or [])]
         history, memory = self._memory_inputs(ctx)
         cm = ContextManager(ctx.spec.spec, ctx.extra_instructions)
         knowledge = ctx.spec.spec.memory.knowledge
@@ -520,7 +529,8 @@ class GovernedHarness(Harness):
         documents = cm.select_documents(
             documents, top_k=knowledge.top_k, min_score=knowledge.min_score, report=selection_report
         )
-        prompt = render(step.prompt, scope_for(state, ctx)) if step.prompt else default_prompt
+        scope = {**scope_for(state, ctx), **(scope_extra or {})}
+        prompt = render(step.prompt, scope) if step.prompt else default_prompt
         messages, report = cm.build(
             task_input=state.get("input", {}),
             prompt=prompt,
@@ -537,7 +547,9 @@ class GovernedHarness(Harness):
 
     # ================================================================== step kinds
     def model_step(self, ctx: ExecutionContext, state: dict[str, Any], step: WorkflowStep) -> dict[str, Any]:
-        schema = ctx.spec.spec.outputs if step.structured else None
+        schema = (step.output_schema or ctx.spec.spec.outputs) if step.structured else None
+        if step.foreach:
+            return self._map_model_step(ctx, state, step, schema)
         messages = self._build_messages(ctx, state, step, schema, "Complete the task described in the input.")
         response = self.call_model(ctx, step.id, messages, schema=schema)
         if schema:
@@ -554,6 +566,61 @@ class GovernedHarness(Harness):
                 }
             }
         return {"steps": {step.id: {"status": "completed", "kind": "model", "output": {"text": response.content}}}}
+
+    def _map_model_step(
+        self, ctx: ExecutionContext, state: dict[str, Any], step: WorkflowStep, schema: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Run the model once per item (map). Items' ``text`` goes in as untrusted content; other fields are
+        available to the prompt as ``{{ item.<field> }}`` and are copied verbatim into each result."""
+        assert step.foreach
+        items = render(step.foreach, scope_for(state, ctx))
+        if not isinstance(items, list):
+            raise StepFailedError(f"foreach of step '{step.id}' did not resolve to a list")
+        include = step.include_steps if step.include_steps is not None else []
+        results: list[dict[str, Any]] = []
+        for index, item in enumerate(items):
+            if ctx.cancel_check():
+                raise ExecutionCancelledError("Execution cancelled")
+            item = item if isinstance(item, dict) else {"text": str(item)}
+            label = str(item.get("label") or item.get("start_label") or f"item {index + 1}")
+            text = str(item.get("text", ""))
+            documents = [
+                {"source": label, "text": text, "score": 1.0, "document_id": f"item-{index}", "chunk_index": index}
+            ]
+            messages = self._build_messages(
+                ctx,
+                state,
+                step,
+                schema,
+                "Process this item.",
+                include=include,
+                extra_documents=documents,
+                scope_extra={
+                    "item": {k: v for k, v in item.items() if k != "text"},
+                    "item_index": index,
+                    "item_count": len(items),
+                },
+            )
+            response = self.call_model(ctx, step.id, messages, schema=schema)
+            if schema:
+                output, errors = self._structured_answer(ctx, step.id, messages, response, schema)
+            else:
+                output, errors = {"text": response.content}, []
+            meta = {k: v for k, v in item.items() if k != "text"}
+            results.append({"index": index, **meta, "output": output, "schema_valid": not errors})
+            ctx.events.emit(
+                "map.item",
+                node_id=step.id,
+                status="completed" if not errors else "invalid",
+                index=index,
+                count=len(items),
+                label=label,
+            )
+        return {
+            "steps": {
+                step.id: {"status": "completed", "kind": "model", "output": {"items": results, "count": len(results)}}
+            }
+        }
 
     def agent_loop_model(self, ctx: ExecutionContext, state: dict[str, Any], step: WorkflowStep) -> dict[str, Any]:
         schema = ctx.spec.spec.outputs if step.structured else None

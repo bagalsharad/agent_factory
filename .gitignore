@@ -35,3 +35,6 @@ secrets.enc
 .idea/
 .vscode/
 *.swp
+
+# Machine-specific editor reports
+.claude/cloude-code-toolbox-mcp-skills-awareness.md

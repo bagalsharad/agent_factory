@@ -15,7 +15,7 @@ A local-first control plane for the lifecycle of AI agents: describe an objectiv
 ## Start
 
 ```bash
-cd /Users/sharadbagal/gen_ai_apps/agent_factory
+cd agent_factory/legacy/prototype-v0.2
 python3 app.py
 ```
 

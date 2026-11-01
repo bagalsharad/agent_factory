@@ -169,8 +169,9 @@ def _validate_output(definition: ToolDefinition, output: Any) -> dict[str, Any]:
     except jsonschema.ValidationError as exc:
         raise ToolError(f"Tool output failed schema validation: {exc.message}") from exc
     text = json.dumps(output, default=str)
-    if len(text) > MAX_OUTPUT_CHARS:
-        return {"truncated": True, "preview": text[:MAX_OUTPUT_CHARS], "original_chars": len(text)}
+    limit = definition.max_output_chars or MAX_OUTPUT_CHARS
+    if len(text) > limit:
+        return {"truncated": True, "preview": text[:limit], "original_chars": len(text)}
     return output
 
 

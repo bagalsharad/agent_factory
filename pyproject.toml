@@ -38,6 +38,8 @@ postgres = ["psycopg[binary]>=3.2"]
 otlp = ["opentelemetry-exporter-otlp-proto-http>=1.27"]
 keyring = ["keyring>=25.0"]
 anthropic = ["anthropic>=1.0"]
+video = ["youtube-transcript-api>=1.2"]
+media = ["mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [project.scripts]
 agent-factory = "agent_factory.cli.main:app"

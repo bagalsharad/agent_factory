@@ -74,7 +74,9 @@ class Settings(BaseSettings):
     oidc_default_role: str = "viewer"
     allow_self_approval: bool = True  # local single-user mode; set false for separation of duties
     # NoDecode: list settings accept comma-separated values ("a,b") as well as JSON ('["a","b"]').
-    cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://127.0.0.1:5173", "http://localhost:5173"])
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://127.0.0.1:5173", "http://localhost:5173"]
+    )
 
     # --- Model providers ---
     default_provider: str = "mock"
@@ -105,7 +107,9 @@ class Settings(BaseSettings):
     sample_data_dir: Path = Field(default_factory=lambda: _bundled_root() / "examples")
     knowledge_dir: Path | None = None  # designated document ingestion directory
     sandbox_dir: Path | None = None  # simulated side effects are written here
-    network_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)  # global REST connector host allowlist
+    network_allowlist: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )  # global REST connector host allowlist
     allow_private_network: bool = False  # SSRF guard: block RFC1918/loopback destinations
     sandbox_backend: SandboxBackend = SandboxBackend.NONE
     sandbox_image: str = "python:3.12-slim"
