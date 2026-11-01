@@ -1,0 +1,10 @@
+From: Billing <billing@cloudhost.example>
+To: me@example.com
+Subject: Invoice INV-20431 due on 5 November - $240.00
+Date: Thu, 30 Oct 2026 09:15:00 +0000
+Message-ID: <inv-20431@cloudhost.example>
+X-Fixture-Unread: yes
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Your invoice <b>INV-20431</b> for <b>$240.00</b> is due on <b>5 November 2026</b>.</p>
+<p>Payment method on file will be charged automatically unless you update it.</p></body></html>

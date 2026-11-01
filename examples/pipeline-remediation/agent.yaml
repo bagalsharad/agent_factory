@@ -1,0 +1,67 @@
+# Example 4 — Pipeline Remediation Agent (human-in-the-loop: pauses for approval before a consequential action)
+api_version: agentfactory/v1
+kind: Agent
+metadata:
+  name: pipeline-remediation
+  display_name: Pipeline Remediation Agent
+  version: 1.0.0
+  description: Assesses a failed run and requests a pipeline restart. The restart (simulated) runs only after an authorized human approves.
+  labels: {example: "true", domain: operations, pattern: human-in-the-loop}
+  template: workflow-automation-agent@1.0.0
+spec:
+  objective: Decide whether a failed pipeline run is safe to restart and, with human approval, restart it.
+  instructions: |
+    Assess the failure from the execution metadata. Explain whether a restart is appropriate.
+    You cannot approve actions; the platform requests a decision from an authorized human.
+  model: {provider: mock, model: mock-default, required_capabilities: [chat, structured_output]}
+  inputs:
+    type: object
+    required: [pipeline_id, execution_id]
+    additionalProperties: false
+    properties:
+      pipeline_id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"}
+      execution_id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_\\-]{0,63}$"}
+  outputs:
+    type: object
+    required: [summary, actions_taken]
+    properties:
+      summary: {type: string}
+      actions_taken: {type: array, items: {type: string}}
+  tools: [inspect_execution_metadata, read_pipeline_logs, restart_pipeline]
+  workflow:
+    type: graph
+    steps:
+      - {id: inspect, kind: tool, tool: inspect_execution_metadata,
+         arguments: {pipeline_id: "{{ input.pipeline_id }}", execution_id: "{{ input.execution_id }}"}}
+      - {id: read_logs, kind: tool, tool: read_pipeline_logs,
+         arguments: {pipeline_id: "{{ input.pipeline_id }}", execution_id: "{{ input.execution_id }}"}}
+      - {id: request_restart, kind: tool, tool: restart_pipeline, description: "Restart after the transient failure",
+         arguments: {pipeline_id: "{{ input.pipeline_id }}", reason: "Transient failure detected in {{ input.execution_id }}; requesting restart"}}
+      - {id: report, kind: model, structured: true, final: true,
+         prompt: "Report the outcome for pipeline {{ input.pipeline_id }}, including whether the restart was performed."}
+  memory: {enabled: false}
+  execution_limits: {max_steps: 10, max_model_calls: 4, max_tool_calls: 6, timeout_seconds: 120}
+  policies:
+    external_network: false
+    allow_write_operations: true
+    require_approval_for: [production_restart]
+  human_approval:
+    required_for_risk: [high, critical]
+    require_for_writes: true
+    expires_after_seconds: 86400
+    approver_roles: [admin, operator]
+  evaluation:
+    cases:
+      - id: approved-restart
+        name: Restart runs after approval
+        kind: functional
+        input: {pipeline_id: orders_daily, execution_id: run_2026_10_30}
+        approval_decision: approve
+        expected: {status: completed, approval_requested: true, tools_called: [restart_pipeline], output_contains: [simulated]}
+      - id: rejected-restart
+        name: Rejected approval means the action is not performed
+        kind: permission
+        input: {pipeline_id: orders_daily, execution_id: run_2026_10_30}
+        approval_decision: reject
+        expected: {status: completed, approval_requested: true, tools_not_called: [restart_pipeline], output_contains: [NOT performed]}
+    acceptance: {min_pass_rate: 1.0}

@@ -1,0 +1,7 @@
+"""Deterministic, schema-first builder for safe agent definitions."""
+from .models import AgentDesignRequest
+ALLOWED_TOOLS={"read_local_logs":"Read explicitly selected local files.","inspect_pipeline_config":"Read pipeline configuration; never modify it.","search_knowledge_base":"Query a configured, read-only knowledge base.","draft_report":"Produce a report without sending it anywhere."}
+ALLOWED_APPROVALS={"restart_pipeline","modify_configuration","delete_data","send_external_message"}
+def build_spec(request: AgentDesignRequest):
+    tools=[tool for tool in request.tools if tool in ALLOWED_TOOLS]; approvals=[action for action in request.approval_actions if action in ALLOWED_APPROVALS]
+    return {"schema_version":"1.0","name":request.name,"objective":request.objective,"instructions":f"You are {request.name}. Your objective is: {request.objective}\n\nWork from evidence supplied in the task. Separate facts from assumptions. Recommend safe next steps, but do not claim actions were performed unless a tool result proves it. Any operation requiring approval must be proposed for a human, never executed autonomously."+(f"\n\nConstraints: {request.constraints}" if request.constraints else ""),"workflow":["interpret_request","gather_evidence","analyze","review_recommendation","present_result"],"tools":[{"name":tool,"description":ALLOWED_TOOLS[tool],"mode":"read_only"} for tool in tools],"requires_approval_for":approvals,"output_contract":["findings","assumptions","recommended_next_steps"]}

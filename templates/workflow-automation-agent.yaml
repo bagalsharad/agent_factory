@@ -1,0 +1,41 @@
+api_version: agentfactory/v1
+kind: AgentTemplate
+metadata:
+  name: workflow-automation-agent
+  version: 1.0.0
+  display_name: Workflow Automation Agent
+  category: operations
+  description: Proposes and, after human approval, performs operational actions (simulated pipeline restarts).
+use_case: Operational remediation where every consequential action pauses for an authorized human decision.
+keywords: [automate, automation, restart, remediate, operations, runbook, fix pipeline, action, ops, incident]
+model_requirements: {capabilities: [chat, tools, structured_output]}
+security_profile: {risk: high, side_effects: write (simulated), summary: "Write actions are classified high-risk and always require human approval. Actions are simulated to a local sandbox log."}
+spec:
+  objective: Inspect a failed pipeline run and, with human approval, restart the pipeline.
+  instructions: |
+    Inspect the execution metadata first. Propose a restart only when the failure is transient (timeouts,
+    unavailable upstream). Explain the reason. You cannot approve your own actions; the platform asks a human.
+  model: {provider: mock, model: mock-default, required_capabilities: [chat, tools, structured_output]}
+  inputs:
+    type: object
+    required: [pipeline_id, execution_id]
+    properties:
+      pipeline_id: {type: string}
+      execution_id: {type: string}
+  outputs:
+    type: object
+    required: [summary, actions_taken]
+    properties:
+      summary: {type: string}
+      actions_taken: {type: array, items: {type: string}}
+  tools: [inspect_execution_metadata, restart_pipeline]
+  workflow:
+    type: graph
+    steps:
+      - {id: inspect, kind: tool, tool: inspect_execution_metadata, arguments: {pipeline_id: "{{ input.pipeline_id }}", execution_id: "{{ input.execution_id }}"}}
+      - {id: restart, kind: tool, tool: restart_pipeline, arguments: {pipeline_id: "{{ input.pipeline_id }}", reason: "Transient failure in {{ input.execution_id }}"}}
+      - {id: report, kind: model, structured: true, final: true, prompt: "Report what was done for {{ input.pipeline_id }}."}
+  memory: {enabled: false}
+  policies:
+    allow_write_operations: true
+    require_approval_for: [production_restart]

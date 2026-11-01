@@ -1,0 +1,6 @@
+Analytics Platform Architecture (Sample)
+
+The analytics platform ingests data from operational databases and event streams into a warehouse.
+Batch pipelines run on Spark; streaming pipelines run on Flink. Orchestration uses a scheduler with retries.
+Data quality checks run after each load and quarantine records that fail validation.
+Access to the warehouse is controlled through role-based access control mapped to identity provider groups.

@@ -1,0 +1,5 @@
+{"_note": "Key facts expected; wording varies by model.",
+ "verdict": "changes_requested",
+ "findings_include": ["SQL injection in app/db.py", "hard-coded credential in app/config.py", "eval on user input in app/api.py",
+                      "insecure deserialization (pickle) in app/api.py", "TLS verification disabled", "swallowed exception in app/db.py",
+                      "service layer coupled to HTTP handlers (app/service.py)"]}

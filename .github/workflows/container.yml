@@ -1,0 +1,40 @@
+# Build the production image, smoke-test it, and produce an SBOM. Never pushes (see release.yml).
+name: Container
+
+on:
+  pull_request:
+    paths: ["deploy/**", "src/**", "web/**", "pyproject.toml", "uv.lock", "migrations/**"]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          load: true
+          push: false
+          tags: agent-factory:ci
+      - name: Smoke test (production profile, api_key auth)
+        run: |
+          docker run -d --name af -p 8787:8787 -e AF_PROFILE=production -e AF_AUTH_MODE=api_key \
+            -e AF_ALLOW_SELF_APPROVAL=false -e AF_OLLAMA_ENABLED=false agent-factory:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/ready && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8787/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/v1/agents)" = "401"
+          docker exec af agent-factory users create ci-admin --role admin
+          docker logs af | tail -20
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: agent-factory:ci
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: true

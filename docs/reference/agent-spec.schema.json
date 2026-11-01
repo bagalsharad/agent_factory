@@ -1,0 +1,1111 @@
+{
+  "$defs": {
+    "Acceptance": {
+      "additionalProperties": false,
+      "properties": {
+        "min_pass_rate": {
+          "default": 1.0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Min Pass Rate",
+          "type": "number"
+        },
+        "required_cases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Required Cases",
+          "type": "array"
+        },
+        "max_avg_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Avg Latency Ms"
+        }
+      },
+      "title": "Acceptance",
+      "type": "object"
+    },
+    "AgentMemory": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "max_items": {
+          "default": 50,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Max Items",
+          "type": "integer"
+        }
+      },
+      "title": "AgentMemory",
+      "type": "object"
+    },
+    "AgentSpecBody": {
+      "additionalProperties": false,
+      "properties": {
+        "objective": {
+          "maxLength": 4000,
+          "minLength": 8,
+          "title": "Objective",
+          "type": "string"
+        },
+        "instructions": {
+          "default": "",
+          "maxLength": 50000,
+          "title": "Instructions",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "inputs": {
+          "additionalProperties": true,
+          "title": "Inputs",
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": true,
+          "title": "Outputs",
+          "type": "object"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolRef"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/ComponentRef"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "workflow": {
+          "$ref": "#/$defs/WorkflowSpec"
+        },
+        "memory": {
+          "$ref": "#/$defs/MemorySpec"
+        },
+        "execution_limits": {
+          "$ref": "#/$defs/ExecutionLimits"
+        },
+        "policies": {
+          "$ref": "#/$defs/Policies"
+        },
+        "human_approval": {
+          "$ref": "#/$defs/HumanApproval"
+        },
+        "evaluation": {
+          "$ref": "#/$defs/EvaluationSpec"
+        }
+      },
+      "required": [
+        "objective"
+      ],
+      "title": "AgentSpecBody",
+      "type": "object"
+    },
+    "ComponentRef": {
+      "additionalProperties": false,
+      "description": "A pinned reference to a registered component. Versions are mandatory: no silent replacement.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "prompt_template",
+            "system_instruction",
+            "tool_definition",
+            "workflow_node",
+            "validation_rule",
+            "retrieval_component",
+            "model_profile",
+            "policy_definition",
+            "evaluation_dataset"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_\\-]{1,119}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version"
+      ],
+      "title": "ComponentRef",
+      "type": "object"
+    },
+    "ConversationMemory": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "max_messages": {
+          "default": 20,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Messages",
+          "type": "integer"
+        }
+      },
+      "title": "ConversationMemory",
+      "type": "object"
+    },
+    "EvalCaseSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.\\-]{0,119}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "default": "functional",
+          "enum": [
+            "functional",
+            "input_validation",
+            "output_schema",
+            "tool_selection",
+            "tool_invocation",
+            "permission",
+            "prompt_injection",
+            "workflow_recovery",
+            "timeout",
+            "model_failure",
+            "regression",
+            "performance",
+            "human_review"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "expected": {
+          "$ref": "#/$defs/EvalExpectation"
+        },
+        "model_override": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "approval_decision": {
+          "default": "none",
+          "enum": [
+            "approve",
+            "reject",
+            "none"
+          ],
+          "title": "Approval Decision",
+          "type": "string"
+        },
+        "limits_override": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limits Override"
+        },
+        "fault_injection": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Deterministic faults, e.g. {'fail_tool_once': 'read_pipeline_logs'}.",
+          "title": "Fault Injection"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "EvalCaseSpec",
+      "type": "object"
+    },
+    "EvalExpectation": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "completed",
+          "title": "Status"
+        },
+        "output_schema_valid": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Schema Valid"
+        },
+        "output_contains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Output Contains",
+          "type": "array"
+        },
+        "output_not_contains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Output Not Contains",
+          "type": "array"
+        },
+        "output_fields": {
+          "additionalProperties": true,
+          "description": "Dotted path \u2192 expected value or {min_items|contains|equals}.",
+          "title": "Output Fields",
+          "type": "object"
+        },
+        "tools_called": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools Called",
+          "type": "array"
+        },
+        "tools_not_called": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools Not Called",
+          "type": "array"
+        },
+        "tools_denied": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools Denied",
+          "type": "array"
+        },
+        "approval_requested": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Requested"
+        },
+        "max_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Latency Ms"
+        },
+        "max_model_calls": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Model Calls"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        }
+      },
+      "title": "EvalExpectation",
+      "type": "object"
+    },
+    "EvaluationSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "suite": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of a registered evaluation suite.",
+          "title": "Suite"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/EvalCaseSpec"
+          },
+          "title": "Cases",
+          "type": "array"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/Acceptance"
+        }
+      },
+      "title": "EvaluationSpec",
+      "type": "object"
+    },
+    "ExecutionLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_steps": {
+          "default": 20,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "max_model_calls": {
+          "default": 20,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Max Model Calls",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 30,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 300,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "max_context_tokens": {
+          "default": 16000,
+          "maximum": 2000000,
+          "minimum": 256,
+          "title": "Max Context Tokens",
+          "type": "integer"
+        },
+        "max_output_tokens": {
+          "default": 2048,
+          "maximum": 200000,
+          "minimum": 16,
+          "title": "Max Output Tokens",
+          "type": "integer"
+        },
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Cost Usd"
+        },
+        "max_subagents": {
+          "default": 4,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Max Subagents",
+          "type": "integer"
+        }
+      },
+      "title": "ExecutionLimits",
+      "type": "object"
+    },
+    "HumanApproval": {
+      "additionalProperties": false,
+      "properties": {
+        "required_for_risk": {
+          "items": {
+            "$ref": "#/$defs/RiskLevel"
+          },
+          "title": "Required For Risk",
+          "type": "array"
+        },
+        "require_for_writes": {
+          "default": true,
+          "title": "Require For Writes",
+          "type": "boolean"
+        },
+        "expires_after_seconds": {
+          "default": 86400,
+          "maximum": 2592000,
+          "minimum": 60,
+          "title": "Expires After Seconds",
+          "type": "integer"
+        },
+        "approver_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Approver Roles",
+          "type": "array"
+        }
+      },
+      "title": "HumanApproval",
+      "type": "object"
+    },
+    "KnowledgeMemory": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "collections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Collections",
+          "type": "array"
+        },
+        "top_k": {
+          "default": 5,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Top K",
+          "type": "integer"
+        },
+        "min_score": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Min Score",
+          "type": "number"
+        }
+      },
+      "title": "KnowledgeMemory",
+      "type": "object"
+    },
+    "MemorySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shorthand: false disables all memory.",
+          "title": "Enabled"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ConversationMemory"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentMemory"
+        },
+        "knowledge": {
+          "$ref": "#/$defs/KnowledgeMemory"
+        }
+      },
+      "title": "MemorySpec",
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Stable slug, unique per workspace.",
+          "pattern": "^[a-z][a-z0-9-]{1,62}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "display_name": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "description": "Semantic version of this specification.",
+          "title": "Version",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Description",
+          "type": "string"
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Labels",
+          "type": "object"
+        },
+        "template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Template the spec was derived from (name@version).",
+          "title": "Template"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "ModelSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "default": "mock",
+          "description": "Model provider id: mock, ollama, openai_compatible, anthropic.",
+          "title": "Provider",
+          "type": "string"
+        },
+        "model": {
+          "default": "mock-default",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional registered model profile name.",
+          "title": "Profile"
+        },
+        "temperature": {
+          "default": 0.0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "max_output_tokens": {
+          "anyOf": [
+            {
+              "maximum": 200000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Output Tokens"
+        },
+        "required_capabilities": {
+          "items": {
+            "enum": [
+              "chat",
+              "tools",
+              "structured_output",
+              "streaming",
+              "vision",
+              "embeddings"
+            ],
+            "type": "string"
+          },
+          "title": "Required Capabilities",
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "exclusiveMinimum": 0,
+          "maximum": 3600,
+          "title": "Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "title": "ModelSpec",
+      "type": "object"
+    },
+    "Policies": {
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "default": "1",
+          "title": "Version",
+          "type": "string"
+        },
+        "external_network": {
+          "default": false,
+          "title": "External Network",
+          "type": "boolean"
+        },
+        "allowed_network_hosts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Network Hosts",
+          "type": "array"
+        },
+        "allow_write_operations": {
+          "default": false,
+          "title": "Allow Write Operations",
+          "type": "boolean"
+        },
+        "require_approval_for": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Require Approval For",
+          "type": "array"
+        },
+        "data_classification": {
+          "default": "internal",
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "restricted"
+          ],
+          "title": "Data Classification",
+          "type": "string"
+        },
+        "capture_content": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Override platform content capture for this agent.",
+          "title": "Capture Content"
+        }
+      },
+      "title": "Policies",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "Specialist": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "agent": {
+          "description": "Agent reference name[@version]. Must be built and executable.",
+          "title": "Agent",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "agent"
+      ],
+      "title": "Specialist",
+      "type": "object"
+    },
+    "ToolRef": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ToolRef",
+      "type": "object"
+    },
+    "WorkflowSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "default": "single",
+          "enum": [
+            "single",
+            "sequential",
+            "supervisor",
+            "graph"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/WorkflowStep"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "specialists": {
+          "items": {
+            "$ref": "#/$defs/Specialist"
+          },
+          "title": "Specialists",
+          "type": "array"
+        },
+        "max_delegations": {
+          "default": 6,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Delegations",
+          "type": "integer"
+        }
+      },
+      "title": "WorkflowSpec",
+      "type": "object"
+    },
+    "WorkflowStep": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_]{0,62}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "model",
+            "tool",
+            "agent_loop",
+            "validate",
+            "approval",
+            "delegate",
+            "retrieve"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Description",
+          "type": "string"
+        },
+        "final": {
+          "default": false,
+          "description": "This step's output is the agent's final output.",
+          "title": "Final",
+          "type": "boolean"
+        },
+        "on_error": {
+          "default": "fail",
+          "enum": [
+            "fail",
+            "continue"
+          ],
+          "title": "On Error",
+          "type": "string"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Template; supports {{input.x}} and {{steps.<id>.output}}.",
+          "title": "Prompt"
+        },
+        "structured": {
+          "default": false,
+          "description": "Request output conforming to spec.outputs.",
+          "title": "Structured",
+          "type": "boolean"
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "agent_loop: subset of the agent's tools (default all).",
+          "title": "Tools"
+        },
+        "max_iterations": {
+          "default": 6,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step whose output is validated (default: previous model step).",
+          "title": "Target"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Action class requiring a human decision.",
+          "title": "Action"
+        },
+        "rationale": {
+          "default": "",
+          "title": "Rationale",
+          "type": "string"
+        },
+        "agent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Specialist agent reference name[@version].",
+          "title": "Agent"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "top_k": {
+          "default": 5,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Top K",
+          "type": "integer"
+        },
+        "collections": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Collections",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "title": "WorkflowStep",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfactory/v1",
+      "default": "agentfactory/v1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Agent",
+      "default": "Agent",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/AgentSpecBody"
+    }
+  },
+  "required": [
+    "metadata",
+    "spec"
+  ],
+  "title": "AgentSpec",
+  "type": "object"
+}

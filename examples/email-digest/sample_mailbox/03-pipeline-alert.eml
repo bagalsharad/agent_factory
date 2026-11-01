@@ -1,0 +1,9 @@
+From: Airflow Alerts <alerts@data.example.com>
+To: me@example.com
+Subject: [FAILED] orders_daily run_2026_10_29 failed at load stage
+Date: Thu, 30 Oct 2026 02:05:00 +0000
+Message-ID: <alert-orders-daily@data.example.com>
+Content-Type: text/plain; charset=utf-8
+
+DAG orders_daily failed. Task load_orders: AnalysisException: cannot resolve column 'discount_code'.
+Retries exhausted. On-call: please investigate before the 08:00 business report.

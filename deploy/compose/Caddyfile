@@ -1,0 +1,20 @@
+# TLS termination and reverse proxy. With AF_DOMAIN=localhost Caddy issues a local certificate;
+# with a public DNS name it obtains certificates automatically (ACME).
+{$AF_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	request_body {
+		max_size 12MB
+	}
+	reverse_proxy api:8787 {
+		header_up X-Request-ID {http.request.uuid}
+		flush_interval -1
+	}
+	log {
+		output stdout
+		format json
+	}
+}

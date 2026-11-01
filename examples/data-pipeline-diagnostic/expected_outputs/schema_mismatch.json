@@ -1,0 +1,9 @@
+{
+  "_note": "Expected shape and key facts. Exact wording depends on the model; evaluation checks are in agent.yaml.",
+  "summary": "Load stage failed because the source schema changed from v14 to v15 and column discount_code has no mapping in the target table.",
+  "probable_causes": ["Upstream orders table migrated to schema v15; target mapping still on v14 (discount_code unmapped)"],
+  "evidence": ["ERROR AnalysisException: cannot resolve column 'discount_code' in target table warehouse.analytics.orders",
+               "WARN  Source schema fingerprint changed: expected v14, observed v15"],
+  "recommendations": ["Add discount_code to the target schema or mapping (schema evolution), then re-run the load stage"],
+  "severity": "high"
+}

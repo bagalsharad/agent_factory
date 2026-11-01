@@ -1,0 +1,2 @@
+{"_note": "Key facts", "probable_causes": ["orders-replica:5432 unreachable; three connection attempts timed out"], "severity": "high",
+ "recommendations": ["Check upstream availability and network path before retrying; do not just raise the timeout"]}

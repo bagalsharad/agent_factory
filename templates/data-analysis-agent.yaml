@@ -1,0 +1,43 @@
+api_version: agentfactory/v1
+kind: AgentTemplate
+metadata:
+  name: data-analysis-agent
+  version: 1.0.0
+  display_name: Data Analysis Agent
+  category: data
+  description: Computes descriptive statistics over supplied numeric data and explains notable patterns.
+use_case: Quick, reproducible analysis of a numeric series with deterministic statistics and a model-written interpretation.
+keywords: [analyze data, statistics, metrics, numbers, trend, average, distribution, dataset, kpi]
+model_requirements: {capabilities: [chat, structured_output]}
+security_profile: {risk: low, side_effects: none, summary: Pure computation on supplied values. No I/O.}
+spec:
+  objective: Compute statistics for the supplied values and explain notable patterns.
+  instructions: |
+    You are a data analysis agent. Base every statement on the computed statistics in the evidence.
+    Flag outliers and data-quality concerns. Do not invent values.
+  model: {provider: mock, model: mock-default, required_capabilities: [chat, structured_output]}
+  inputs:
+    type: object
+    required: [question, values]
+    properties:
+      question: {type: string}
+      values: {type: array, items: {type: number}, minItems: 1}
+  outputs:
+    type: object
+    required: [summary, insights]
+    properties:
+      summary: {type: string}
+      insights: {type: array, items: {type: string}}
+  tools: [compute_statistics]
+  workflow:
+    type: graph
+    steps:
+      - {id: stats, kind: tool, tool: compute_statistics, arguments: {values: "{{ input.values }}"}}
+      - {id: interpret, kind: model, structured: true, final: true, prompt: "Answer: {{ input.question }}"}
+  memory: {enabled: false}
+  evaluation:
+    cases:
+      - id: basic-stats
+        name: Computes statistics
+        input: {question: Summarize latency, values: [120, 130, 125, 900]}
+        expected: {status: completed, output_schema_valid: true, tools_called: [compute_statistics]}

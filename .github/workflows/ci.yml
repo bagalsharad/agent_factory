@@ -1,0 +1,96 @@
+# Pull-request validation: lint, type checks, backend tests (unit/integration/security/e2e/performance with the
+# deterministic mock model), frontend lint/type/test/build, migrations on SQLite and PostgreSQL.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-quality:
+    name: Python lint & type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv python install 3.12
+      - run: uv sync --frozen --all-extras
+      - run: uv run ruff check src tests migrations
+      - run: uv run ruff format --check src
+      - run: uv run mypy
+
+  python-tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv python install 3.12
+      - run: uv sync --frozen --all-extras
+      - name: Tests (deterministic mock model)
+        run: uv run pytest -q --cov=agent_factory --cov-report=xml --junitxml=test-results.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: python-test-results
+          path: |
+            test-results.xml
+            coverage.xml
+
+  postgres-integration:
+    name: Integration (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: af
+          POSTGRES_PASSWORD: af-test-password
+          POSTGRES_DB: agent_factory_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U af -d agent_factory_test" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      AF_TEST_DATABASE_URL: postgresql+psycopg://af:af-test-password@localhost:5432/agent_factory_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv python install 3.12
+      - run: uv sync --frozen --all-extras
+      - name: Migrations apply cleanly and match the models
+        env:
+          AF_DATABASE_URL: ${{ env.AF_TEST_DATABASE_URL }}
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+      - name: Full test suite on PostgreSQL (one fresh database per test)
+        env:
+          AF_TEST_POSTGRES_ADMIN_URL: ${{ env.AF_TEST_DATABASE_URL }}
+        run: uv run pytest -q
+
+  web:
+    name: Web lint, type check, tests & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint -- --max-warnings 0
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

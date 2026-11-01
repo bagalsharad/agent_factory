@@ -1,0 +1,24 @@
+api_version: agentfactory/v1
+kind: AgentTemplate
+metadata:
+  name: custom-agent
+  version: 1.0.0
+  display_name: Custom Agent
+  category: general
+  description: A minimal starting point. Add tools, workflow steps, policies and evaluation cases yourself.
+use_case: Anything not covered by another template.
+keywords: []
+model_requirements: {capabilities: [chat]}
+security_profile: {risk: low, side_effects: none, summary: No tools until you add them.}
+spec:
+  objective: Complete the user's task as described in the input.
+  instructions: You are a helpful, precise assistant. State uncertainty explicitly.
+  model: {provider: mock, model: mock-default}
+  workflow: {type: single, steps: [{id: respond, kind: agent_loop, structured: true, final: true}]}
+  memory: {enabled: false}
+  evaluation:
+    cases:
+      - id: smoke
+        name: Responds to a simple task
+        input: {task: "Say hello"}
+        expected: {status: completed, output_schema_valid: true}

@@ -1,0 +1,12 @@
+# Example catalogue installed by `agent-factory examples install` (order matters: specialists first).
+knowledge:
+  - {collection: research-docs, directory: document-research/documents}
+agents:
+  - data-pipeline-diagnostic/agent.yaml
+  - document-research/agent.yaml
+  - software-review/agents/architecture-reviewer.yaml
+  - software-review/agents/security-reviewer.yaml
+  - software-review/agents/code-quality-reviewer.yaml
+  - software-review/agent.yaml
+  - pipeline-remediation/agent.yaml
+  - email-digest/agent.yaml
