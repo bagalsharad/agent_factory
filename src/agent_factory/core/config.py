@@ -138,6 +138,15 @@ class Settings(BaseSettings):
         default_factory=lambda: _bundled_root() / "examples" / "video-summarizer" / "sample_transcripts"
     )
 
+    # --- Interview prep ---
+    document_dirs: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["~/Documents", "~/Downloads", "~/Desktop"]
+    )  # only resumes / job descriptions / feedback inside these folders can be read
+    interview_prep_dir: Path = Field(default_factory=lambda: Path.home() / "Documents" / "InterviewPrep")
+    interview_fixture_dir: Path = Field(
+        default_factory=lambda: _bundled_root() / "examples" / "interview-prep" / "samples"
+    )
+
     # --- Observability / data protection ---
     capture_content: bool | None = None  # None → profile default
     telemetry_exporter: Literal["none", "console", "otlp"] = "none"
@@ -147,7 +156,9 @@ class Settings(BaseSettings):
     # --- Secrets ---
     secrets_backend: Literal["env", "keyring", "file"] = "env"
 
-    @field_validator("cors_origins", "network_allowlist", "disabled_tools", "media_dirs", mode="before")
+    @field_validator(
+        "cors_origins", "network_allowlist", "disabled_tools", "media_dirs", "document_dirs", mode="before"
+    )
     @classmethod
     def _split_csv(cls, value: Any) -> Any:
         if isinstance(value, str):

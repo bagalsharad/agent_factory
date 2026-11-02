@@ -5,6 +5,7 @@ All notable changes are documented here. The project follows [Semantic Versionin
 ## [Unreleased]
 
 ### Added
+- Interview Prep example: resume tailored to a job description saved as Word and PDF, scenario-based questions and answers from the job description and previous feedback, video talking points, study checklist and day plan; `load_interview_materials`, `get_video_transcripts` and `save_interview_prep` tools; `AF_DOCUMENT_DIRS`, `AF_INTERVIEW_PREP_DIR` settings.
 - Video Summarizer & Transcriber example; `get_video_transcript` (YouTube captions, local Whisper/MLX, fixtures) and `save_video_notes` tools; `agent-factory media setup|status`.
 - Workflow `foreach` (map) model steps, per-step `output_schema`, `include_steps` context control; per-tool output size limits.
 - Email connector: read-only IMAP fetch, send-to-self SMTP, digest files, macOS notifications.
