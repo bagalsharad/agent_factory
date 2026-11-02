@@ -128,6 +128,16 @@ class Settings(BaseSettings):
     )
     digest_dir: Path = Field(default_factory=lambda: Path.home() / "Documents" / "EmailDigests")
 
+    # --- Video transcripts ---
+    media_dirs: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["~/Movies", "~/Downloads", "~/Desktop", "~/Documents"]
+    )  # only local media inside these folders can be transcribed
+    whisper_model: str = "mlx-community/whisper-large-v3-turbo"
+    video_notes_dir: Path = Field(default_factory=lambda: Path.home() / "VideoNotes")
+    video_fixture_dir: Path = Field(
+        default_factory=lambda: _bundled_root() / "examples" / "video-summarizer" / "sample_transcripts"
+    )
+
     # --- Observability / data protection ---
     capture_content: bool | None = None  # None → profile default
     telemetry_exporter: Literal["none", "console", "otlp"] = "none"
@@ -137,7 +147,7 @@ class Settings(BaseSettings):
     # --- Secrets ---
     secrets_backend: Literal["env", "keyring", "file"] = "env"
 
-    @field_validator("cors_origins", "network_allowlist", "disabled_tools", mode="before")
+    @field_validator("cors_origins", "network_allowlist", "disabled_tools", "media_dirs", mode="before")
     @classmethod
     def _split_csv(cls, value: Any) -> Any:
         if isinstance(value, str):

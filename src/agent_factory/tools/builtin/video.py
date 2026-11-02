@@ -82,7 +82,7 @@ def build_chunks(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group segments into model-sized chunks (at most MAX_CHUNKS) that keep their start times."""
     total = sum(len(s["text"]) + 1 for s in segments)
     target = max(CHUNK_CHARS, math.ceil(total / MAX_CHUNKS))
-    chunks: list[dict[str, Any]] = []
+    chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     size = 0
     for seg in segments:
@@ -95,14 +95,16 @@ def build_chunks(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         chunks.append(current)
     out = []
     for n, group in enumerate(chunks, 1):
-        out.append({
-            "number": n,
-            "start_seconds": int(group[0]["start"]),
-            "end_seconds": int(group[-1]["end"]),
-            "start_label": fmt_ts(group[0]["start"]),
-            "label": f"segment {n} @ {fmt_ts(group[0]['start'])}",
-            "text": " ".join(s["text"] for s in group),
-        })
+        out.append(
+            {
+                "number": n,
+                "start_seconds": int(group[0]["start"]),
+                "end_seconds": int(group[-1]["end"]),
+                "start_label": fmt_ts(group[0]["start"]),
+                "label": f"segment {n} @ {fmt_ts(group[0]['start'])}",
+                "text": " ".join(s["text"] for s in group),
+            }
+        )
     return out
 
 
@@ -163,8 +165,10 @@ def _youtube(video_id: str, languages: list[str], settings: Settings) -> dict[st
                 transcript = first
         fetched = transcript.fetch()
     except TranscriptsDisabled as exc:
-        raise ToolError("This video has no captions (captions are disabled). Local transcription requires a "
-                        "file you are allowed to download.") from exc
+        raise ToolError(
+            "This video has no captions (captions are disabled). Local transcription requires a "
+            "file you are allowed to download."
+        ) from exc
     except CouldNotRetrieveTranscript as exc:
         raise ToolError(f"Could not retrieve captions: {exc.__class__.__name__}", retryable=False) from exc
     except StopIteration as exc:
@@ -172,25 +176,36 @@ def _youtube(video_id: str, languages: list[str], settings: Settings) -> dict[st
     segments = _normalize([{"text": s.text, "start": s.start, "duration": s.duration} for s in fetched.snippets])
     title, author = video_id, ""
     try:  # official oEmbed: title and channel only
-        response = httpx.get("https://www.youtube.com/oembed",
-                             params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"}, timeout=10)
+        response = httpx.get(
+            "https://www.youtube.com/oembed",
+            params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+            timeout=10,
+        )
         if response.status_code == 200:
             meta = response.json()
             title, author = str(meta.get("title", video_id))[:300], str(meta.get("author_name", ""))[:200]
     except (httpx.HTTPError, ValueError):
         pass
-    return {"source_type": "youtube", "video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
-            "title": title, "channel": author, "language": fetched.language_code, "captions": (
-                "auto-generated" if fetched.is_generated else "manual") + (" (translated)" if translated else ""),
-            "segments": segments}
+    return {
+        "source_type": "youtube",
+        "video_id": video_id,
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "title": title,
+        "channel": author,
+        "language": fetched.language_code,
+        "captions": ("auto-generated" if fetched.is_generated else "manual") + (" (translated)" if translated else ""),
+        "segments": segments,
+    }
 
 
 def _approved_media_path(raw: str, settings: Settings) -> Path:
     path = Path(raw).expanduser().resolve()
     roots = [Path(r).expanduser().resolve() for r in settings.media_dirs]
     if not any(path.is_relative_to(root) for root in roots):
-        raise ToolError("File is outside the approved media folders (AF_MEDIA_DIRS: "
-                        f"{', '.join(settings.media_dirs)})", details={"code": "path_not_allowed"})
+        raise ToolError(
+            f"File is outside the approved media folders (AF_MEDIA_DIRS: {', '.join(settings.media_dirs)})",
+            details={"code": "path_not_allowed"},
+        )
     if path.suffix.lower() not in MEDIA_SUFFIXES:
         raise ToolError(f"Unsupported media type '{path.suffix}'")
     if not path.is_file():
@@ -224,8 +239,21 @@ def _local_file(path: Path, languages: list[str], settings: Settings, timeout: f
     if problems:
         raise ToolError("Local transcription is not ready: " + "; ".join(problems))
     probe = subprocess.run(  # noqa: S603 - fixed executable, path passed as an argument
-        [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True, timeout=30, check=False)
+        [
+            shutil.which("ffprobe") or "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
     try:
         duration = float(json.loads(probe.stdout)["format"]["duration"])
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -243,9 +271,17 @@ def _local_file(path: Path, languages: list[str], settings: Settings, timeout: f
     if proc.returncode != 0:
         raise ToolError(f"Transcription failed: {proc.stderr.strip()[-300:]}")
     result = json.loads(proc.stdout)
-    return {"source_type": "file", "video_id": None, "url": None, "title": path.stem.replace("_", " "), "channel": "",
-            "file": str(path), "language": result.get("language"), "captions": f"whisper ({settings.whisper_model})",
-            "segments": _normalize(result.get("segments", []))}
+    return {
+        "source_type": "file",
+        "video_id": None,
+        "url": None,
+        "title": path.stem.replace("_", " "),
+        "channel": "",
+        "file": str(path),
+        "language": result.get("language"),
+        "captions": f"whisper ({settings.whisper_model})",
+        "segments": _normalize(result.get("segments", [])),
+    }
 
 
 def _fixture(name: str, settings: Settings) -> dict[str, Any]:
@@ -255,19 +291,30 @@ def _fixture(name: str, settings: Settings) -> dict[str, Any]:
     if not path.is_file():
         raise ToolError(f"Unknown sample transcript '{name}'")
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {"source_type": data.get("source_type", "youtube"), "video_id": data.get("video_id"), "url": data.get("url"),
-            "title": data["title"], "channel": data.get("channel", ""), "language": data.get("language", "en"),
-            "captions": "sample", "segments": _normalize(data["segments"])}
+    return {
+        "source_type": data.get("source_type", "youtube"),
+        "video_id": data.get("video_id"),
+        "url": data.get("url"),
+        "title": data["title"],
+        "channel": data.get("channel", ""),
+        "language": data.get("language", "en"),
+        "captions": "sample",
+        "segments": _normalize(data["segments"]),
+    }
 
 
 class TranscriptInput(BaseModel):
-    source: str = Field(min_length=1, max_length=2000, description="YouTube URL/id, local file path, or fixture:<name>.")
+    source: str = Field(
+        min_length=1, max_length=2000, description="YouTube URL/id, local file path, or fixture:<name>."
+    )
     languages: list[str] | None = Field(None, max_length=5, description="Preferred caption languages, e.g. ['en'].")
 
 
 class GetVideoTranscript(Tool):
     name = "get_video_transcript"
-    description = "Get a timestamped transcript for a YouTube video (existing captions) or a local media file (Whisper)."
+    description = (
+        "Get a timestamped transcript for a YouTube video (existing captions) or a local media file (Whisper)."
+    )
     connector = "video"
     Input = TranscriptInput
     risk = RiskLevel.LOW
@@ -286,7 +333,9 @@ class GetVideoTranscript(Tool):
         return "www.youtube.com" if youtube_id(str(arguments.get("source", ""))) else None
 
     def run(self, args: TranscriptInput, ctx: ToolContext) -> dict[str, Any]:
-        languages = [lang for lang in (args.languages or ["en"]) if re.match(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$", lang)]
+        languages = [
+            lang for lang in (args.languages or ["en"]) if re.match(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$", lang)
+        ]
         source = args.source.strip()
         if source.startswith("fixture:"):
             data = _fixture(source.removeprefix("fixture:"), ctx.settings)
@@ -295,8 +344,9 @@ class GetVideoTranscript(Tool):
         elif "://" in source:
             raise ToolError("Only YouTube URLs are supported for online videos", details={"code": "unsupported_url"})
         else:
-            data = _local_file(_approved_media_path(source, ctx.settings), languages, ctx.settings,
-                               self.timeout_seconds - 30)
+            data = _local_file(
+                _approved_media_path(source, ctx.settings), languages, ctx.settings, self.timeout_seconds - 30
+            )
         segments = data["segments"]
         if not segments:
             raise ToolError("The transcript is empty")
@@ -329,10 +379,18 @@ def _bullets(items: Any) -> list[str]:
 def render_notes(notes: dict[str, Any], t: dict[str, Any]) -> str:
     title = str(notes.get("title") or t.get("title") or "Video notes")
     source = f"[{t['url']}]({t['url']})" if t.get("url") else (t.get("file") or "sample")
-    out = [f"# {title}", "",
-           f"*Source:* {source}" + (f" · *Channel:* {t['channel']}" if t.get("channel") else "")
-           + f" · *Length:* {t.get('duration_label', '')} · *Transcript:* {t.get('captions', '')} ({t.get('language', '')})",
-           f"*Generated:* {datetime.now().astimezone():%Y-%m-%d %H:%M}", "", "## Summary", "", str(notes.get("overview", "")).strip()]
+    out = [
+        f"# {title}",
+        "",
+        f"*Source:* {source}"
+        + (f" · *Channel:* {t['channel']}" if t.get("channel") else "")
+        + f" · *Length:* {t.get('duration_label', '')} · *Transcript:* {t.get('captions', '')} ({t.get('language', '')})",
+        f"*Generated:* {datetime.now().astimezone():%Y-%m-%d %H:%M}",
+        "",
+        "## Summary",
+        "",
+        str(notes.get("overview", "")).strip(),
+    ]
     if notes.get("key_points"):
         out += ["", "## Key points", "", *_bullets(notes["key_points"])]
     chapters = notes.get("chapters") or []
@@ -343,8 +401,11 @@ def render_notes(notes: dict[str, Any], t: dict[str, Any]) -> str:
                 continue
             start = str(ch.get("start", "")).strip()
             seconds = parse_ts(start)
-            stamp = (f"[{start}](https://youtu.be/{t['video_id']}?t={seconds})"
-                     if seconds is not None and t.get("video_id") else start)
+            stamp = (
+                f"[{start}](https://youtu.be/{t['video_id']}?t={seconds})"
+                if seconds is not None and t.get("video_id")
+                else start
+            )
             out.append(f"- **{stamp}** {str(ch.get('title', '')).strip()} — {str(ch.get('summary', '')).strip()}")
     if notes.get("quotes"):
         out += ["", "## Notable quotes", "", *[f"> {str(q).strip()}\n" for q in notes["quotes"]]]
@@ -370,7 +431,9 @@ def render_notes(notes: dict[str, Any], t: dict[str, Any]) -> str:
 
 class SaveVideoNotes(Tool):
     name = "save_video_notes"
-    description = "Write notes.md (summary, chapters with timestamp links, action items, study notes) and transcript.md."
+    description = (
+        "Write notes.md (summary, chapters with timestamp links, action items, study notes) and transcript.md."
+    )
     connector = "local_files"
     Input = SaveNotesInput
     risk = RiskLevel.LOW
@@ -393,6 +456,13 @@ class SaveVideoNotes(Tool):
         transcript_path = folder / "transcript.md"
         transcript_path.write_text(
             f"# Transcript — {t.get('title', '')}\n\n{t.get('url') or t.get('file') or ''}\n\n"
-            + str(t.get("transcript_markdown") or transcript_markdown(t["segments"])) + "\n", encoding="utf-8")
-        return {"folder": str(folder), "notes": str(notes_path), "transcript": str(transcript_path),
-                "dry_run": bool(args.dry_run)}
+            + str(t.get("transcript_markdown") or transcript_markdown(t["segments"]))
+            + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "folder": str(folder),
+            "notes": str(notes_path),
+            "transcript": str(transcript_path),
+            "dry_run": bool(args.dry_run),
+        }

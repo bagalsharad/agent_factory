@@ -1,0 +1,230 @@
+{
+ "title": "Building Reliable AI Agents for Data Teams",
+ "channel": "Sample Conference",
+ "video_id": "AbCdEfGhIjK",
+ "url": "https://www.youtube.com/watch?v=AbCdEfGhIjK",
+ "language": "en",
+ "source_type": "youtube",
+ "segments": [
+  {
+   "start": 0.0,
+   "duration": 3.0,
+   "text": "Welcome everyone."
+  },
+  {
+   "start": 3.4,
+   "duration": 5.86,
+   "text": "Today we are talking about building reliable AI agents for data engineering teams."
+  },
+  {
+   "start": 9.66,
+   "duration": 8.07,
+   "text": "I'll cover three things: why agents fail in production, how to evaluate them, and how to govern what they can do."
+  },
+  {
+   "start": 18.13,
+   "duration": 4.79,
+   "text": "First, why do agents fail? The most common failure is not the model."
+  },
+  {
+   "start": 23.31,
+   "duration": 3.0,
+   "text": "It is missing evidence."
+  },
+  {
+   "start": 26.71,
+   "duration": 7.29,
+   "text": "An agent that cannot read the pipeline logs will guess, and a confident guess is worse than no answer."
+  },
+  {
+   "start": 34.4,
+   "duration": 6.79,
+   "text": "So the first rule is: give agents read-only access to the evidence they need, and nothing more."
+  },
+  {
+   "start": 41.59,
+   "duration": 3.0,
+   "text": "The second failure mode is unbounded loops."
+  },
+  {
+   "start": 44.99,
+   "duration": 4.43,
+   "text": "Without step and time budgets an agent can call tools forever."
+  },
+  {
+   "start": 49.81,
+   "duration": 6.71,
+   "text": "Every execution should have a maximum number of steps, model calls, tool calls, and a timeout."
+  },
+  {
+   "start": 56.93,
+   "duration": 3.0,
+   "text": "Third, prompt injection."
+  },
+  {
+   "start": 60.33,
+   "duration": 5.43,
+   "text": "Logs, emails and documents can contain instructions written by someone else."
+  },
+  {
+   "start": 66.16,
+   "duration": 3.0,
+   "text": "You cannot fix that with a better prompt."
+  },
+  {
+   "start": 69.56,
+   "duration": 3.86,
+   "text": "You fix it by keeping authorization outside the model."
+  },
+  {
+   "start": 73.81,
+   "duration": 7.79,
+   "text": "The model may ask to restart a pipeline, but a policy engine decides, and a human approves high-risk actions."
+  },
+  {
+   "start": 82.0,
+   "duration": 3.0,
+   "text": "Now let's talk about evaluation."
+  },
+  {
+   "start": 85.4,
+   "duration": 4.36,
+   "text": "Treat agents like software: write test cases before you ship."
+  },
+  {
+   "start": 90.16,
+   "duration": 6.71,
+   "text": "A good suite has functional cases, regression cases, prompt injection cases and failure cases."
+  },
+  {
+   "start": 97.27,
+   "duration": 7.07,
+   "text": "For example: what happens when the model provider is down? The agent should fail cleanly, not hang."
+  },
+  {
+   "start": 104.74,
+   "duration": 7.36,
+   "text": "Measure task completion, schema compliance, correct tool selection, latency and cost for every version."
+  },
+  {
+   "start": 112.5,
+   "duration": 5.57,
+   "text": "And never publish a new version unless it passes the same suite as the old one."
+  },
+  {
+   "start": 118.47,
+   "duration": 3.0,
+   "text": "Compare them side by side."
+  },
+  {
+   "start": 121.87,
+   "duration": 6.64,
+   "text": "LLM as a judge can be one signal, but it should never be the only gate for quality or safety."
+  },
+  {
+   "start": 128.91,
+   "duration": 3.0,
+   "text": "Let me show a quick case study."
+  },
+  {
+   "start": 132.31,
+   "duration": 4.0,
+   "text": "A team ran a pipeline diagnostic agent for three months."
+  },
+  {
+   "start": 136.71,
+   "duration": 7.07,
+   "text": "In the first week it recommended restarting a pipeline that was failing because of a schema change."
+  },
+  {
+   "start": 144.19,
+   "duration": 3.0,
+   "text": "A restart would not have helped."
+  },
+  {
+   "start": 147.59,
+   "duration": 4.71,
+   "text": "The approval step caught it, and the team added a regression test."
+  },
+  {
+   "start": 152.7,
+   "duration": 7.64,
+   "text": "After that, the agent's recommendations improved because the evaluation suite encoded what good looks like."
+  },
+  {
+   "start": 160.74,
+   "duration": 3.0,
+   "text": "Governance is the last piece."
+  },
+  {
+   "start": 164.14,
+   "duration": 3.93,
+   "text": "Every agent version should be immutable once published."
+  },
+  {
+   "start": 168.47,
+   "duration": 7.14,
+   "text": "Record exactly which model, tools, workflow and policy each execution used, so you can reproduce it."
+  },
+  {
+   "start": 176.01,
+   "duration": 7.07,
+   "text": "Keep an audit log that is tamper-evident, and separate who requests an action from who approves it."
+  },
+  {
+   "start": 183.49,
+   "duration": 7.14,
+   "text": "Action items for your team: first, inventory the tools your agents can call and classify their risk."
+  },
+  {
+   "start": 191.03,
+   "duration": 3.57,
+   "text": "Second, add execution budgets to every agent today."
+  },
+  {
+   "start": 195.0,
+   "duration": 3.14,
+   "text": "It takes minutes and prevents runaway costs."
+  },
+  {
+   "start": 198.54,
+   "duration": 6.5,
+   "text": "Third, write at least five evaluation cases per agent, including one prompt injection case."
+  },
+  {
+   "start": 205.44,
+   "duration": 5.57,
+   "text": "Fourth, require human approval for anything that writes to production systems."
+  },
+  {
+   "start": 211.41,
+   "duration": 5.57,
+   "text": "A key term to remember is idempotency: a retried action must not happen twice."
+  },
+  {
+   "start": 217.39,
+   "duration": 6.64,
+   "text": "Another is groundedness: every claim in the answer should be supported by retrieved evidence."
+  },
+  {
+   "start": 224.43,
+   "duration": 7.64,
+   "text": "To wrap up: give agents evidence, bound their execution, test them like software, and govern their actions."
+  },
+  {
+   "start": 232.47,
+   "duration": 6.5,
+   "text": "As one engineer told me, the best agent is the one you can explain at three in the morning."
+  },
+  {
+   "start": 239.37,
+   "duration": 3.0,
+   "text": "Thank you."
+  },
+  {
+   "start": 242.77,
+   "duration": 5.36,
+   "text": "I'm happy to take questions about evaluation suites and approval workflows."
+  }
+ ]
+}

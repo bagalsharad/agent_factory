@@ -78,7 +78,12 @@ spec:
 | `delegate` | `agent` (`name[@version]`), `task` | Runs a specialist as a child execution |
 | `retrieve` | `query`, `top_k`, `collections` | Knowledge retrieval (requires `memory.knowledge`) |
 
-Common fields: `id` (snake_case), `description`, `final` (one step), `on_error: fail|continue`.
+Common fields: `id` (snake_case), `description`, `final` (one step), `on_error: fail|continue`,
+`include_steps` (earlier steps whose outputs enter the context; default all).
+
+Model steps also accept `output_schema` (per-step JSON Schema) and `foreach` (a template resolving to a list):
+the step runs once per item, `{{ item.<field> }}` is available in the prompt, the item's `text` is passed as
+untrusted content, and the output is `{items: [{index, ...item fields, output}], count}` (map-reduce).
 Templates: `{{ input.<path> }}`, `{{ steps.<id>.output[.<path>] }}`, `{{ components.<prompt_template_name> }}`.
 A lone placeholder keeps the value's type (lists, numbers).
 

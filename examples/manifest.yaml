@@ -10,3 +10,4 @@ agents:
   - software-review/agent.yaml
   - pipeline-remediation/agent.yaml
   - email-digest/agent.yaml
+  - video-summarizer/agent.yaml

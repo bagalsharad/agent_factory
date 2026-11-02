@@ -36,7 +36,7 @@ Most agent prototypes let a model decide what it may do. Agent Factory inverts t
 | AI harness | Context engineering with untrusted-content delimiting and token budgets, model gateway calls with retries/timeouts, policy-filtered tool discovery, idempotent tool invocation, output validation, budgets, cancellation |
 | Runtime | LangGraph workflows: single agent, sequential multi-agent, supervisor + specialists; checkpointing in the platform DB; pause/resume; crash recovery |
 | Model gateway | Deterministic mock (tests/demos), Ollama, OpenAI-compatible, optional Claude API — capability-aware, local-first |
-| Tools | 19 registered tools: read-only email (IMAP), send-to-self email, digest files, desktop notifications, pipeline evidence, workspace knowledge, code artifacts (read-only + static scanner), statistics, allowlisted REST (SSRF-protected), simulated write actions, sandboxed code execution (refused without a sandbox) |
+| Tools | 21 registered tools: video transcripts (YouTube captions, local Whisper) and notes, read-only email (IMAP), send-to-self email, digest files, desktop notifications, pipeline evidence, workspace knowledge, code artifacts (read-only + static scanner), statistics, allowlisted REST (SSRF-protected), simulated write actions, sandboxed code execution (refused without a sandbox) |
 | Governance | RBAC (admin, developer, operator, evaluator, viewer), workspaces, local / API-key / OIDC auth, policy engine, approvals with separation of duties, hash-chained audit log, secret stores, data retention |
 | Evaluation | Functional, schema, tool-selection, permission, prompt-injection, recovery, timeout, model-failure, regression, performance and human-review cases; metrics; acceptance gates; version comparison |
 | Observability | Structured JSON logs with correlation IDs, persisted execution events, OpenTelemetry spans (exporter off by default), live workflow visualizer |
@@ -131,6 +131,7 @@ uv run agent-factory agents create --objective "Create an agent that reviews pul
 | [Document Research](examples/document-research/) | single (agent loop) | retrieval over an approved corpus with citations, unsupported-claim detection, injected-document resistance |
 | [Multi-Agent Software Review](examples/software-review/) | supervisor + 3 specialists | bounded delegation, read-only code review, never executes reviewed code |
 | [Pipeline Remediation](examples/pipeline-remediation/) | graph + human approval | a simulated restart that pauses, persists, and resumes only after approval |
+| [Video Summarizer](examples/video-summarizer/) | graph, map-reduce | YouTube captions or local Whisper → notes with timestamped chapters + full transcript ([setup](docs/user-guide/video-summarizer.md)) |
 | [Daily Email Digest](examples/email-digest/) | graph, scheduled | read-only Gmail IMAP → local-model summary → Markdown file, email to self, macOS notification ([setup](docs/user-guide/email-digest.md)) |
 
 Walkthrough: [docs/user-guide/walkthrough.md](docs/user-guide/walkthrough.md).

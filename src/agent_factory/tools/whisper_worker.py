@@ -20,8 +20,9 @@ def main() -> int:
     args = parser.parse_args()
     import mlx_whisper
 
-    result = mlx_whisper.transcribe(args.path, path_or_hf_repo=args.model, language=args.language,
-                                    condition_on_previous_text=False, verbose=None)
+    result = mlx_whisper.transcribe(
+        args.path, path_or_hf_repo=args.model, language=args.language, condition_on_previous_text=False, verbose=None
+    )
     segments = [{"start": s["start"], "end": s["end"], "text": s["text"]} for s in result.get("segments", [])]
     json.dump({"language": result.get("language"), "segments": segments}, sys.stdout)
     return 0

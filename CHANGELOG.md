@@ -5,6 +5,8 @@ All notable changes are documented here. The project follows [Semantic Versionin
 ## [Unreleased]
 
 ### Added
+- Video Summarizer & Transcriber example; `get_video_transcript` (YouTube captions, local Whisper/MLX, fixtures) and `save_video_notes` tools; `agent-factory media setup|status`.
+- Workflow `foreach` (map) model steps, per-step `output_schema`, `include_steps` context control; per-tool output size limits.
 - Email connector: read-only IMAP fetch, send-to-self SMTP, digest files, macOS notifications.
 - Daily Email Digest example agent, `agent-factory email setup|test`, `agent-factory schedule install|list|remove` (launchd).
 - Tools can declare their own network destination; Ollama requests set `num_ctx` and disable thinking for structured output.

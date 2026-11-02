@@ -543,6 +543,8 @@ class MockProvider(ModelProvider):
 
     def _fill_string(self, path: str, ctx: _Context) -> str:
         name = path.lower()
+        if name in {"start", "timestamp", "start_time", "time"}:
+            return str(ctx.known.get("start_label", "00:00"))
         if ctx.passages and any(k in name for k in ("answer", "summary")):
             best = ctx.relevant_sentences(2)
             if not best:

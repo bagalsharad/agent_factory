@@ -11,6 +11,7 @@ from .email import FetchRecentEmails, NotifyDesktop, SaveDigestFile, SendDigestT
 from .http import HttpGet
 from .pipeline import InspectExecutionMetadata, ListPipelineExecutions, ReadPipelineLogs
 from .sandbox_exec import PythonSandboxExec
+from .video import GetVideoTranscript, SaveVideoNotes
 
 BUILTIN_TOOLS: list[Callable[[], Tool]] = [
     ReadPipelineLogs,
@@ -32,6 +33,8 @@ BUILTIN_TOOLS: list[Callable[[], Tool]] = [
     SaveDigestFile,
     SendDigestToSelf,
     NotifyDesktop,
+    GetVideoTranscript,
+    SaveVideoNotes,
 ]
 
 __all__ = ["BUILTIN_TOOLS"]

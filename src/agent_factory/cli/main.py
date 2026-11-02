@@ -822,3 +822,46 @@ def schedule_remove(agent: str) -> None:
     subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", str(path)], capture_output=True, check=False)  # noqa: S603, S607
     path.unlink(missing_ok=True)
     console.print(f"removed {path}")
+
+
+# ============================================================================ media (local transcription)
+media_app = typer.Typer(help="Local audio/video transcription (Whisper on Apple Silicon).", no_args_is_help=True)
+app.add_typer(media_app, name="media")
+
+
+@media_app.command("setup")
+def media_setup(
+    model: Annotated[str | None, typer.Option(help="Hugging Face repo of the MLX Whisper model")] = None,
+) -> None:
+    """Check ffmpeg and explicitly download the Whisper model (~1.6 GB for large-v3-turbo)."""
+    import importlib.util
+
+    settings = get_settings()
+    repo = model or settings.whisper_model
+    if not shutil.which("ffmpeg"):
+        console.print("[red]✗[/red] ffmpeg not found — install it with: [cyan]brew install ffmpeg[/cyan]")
+        raise typer.Exit(1)
+    console.print("[green]✓[/green] ffmpeg found")
+    if importlib.util.find_spec("mlx_whisper") is None:
+        console.print(
+            "[red]✗[/red] mlx-whisper not installed — run: [cyan]uv sync --extra media[/cyan] (Apple Silicon)"
+        )
+        raise typer.Exit(1)
+    from huggingface_hub import snapshot_download
+
+    console.print(f"Downloading {repo} (this is the only time the model is downloaded)…")
+    path = snapshot_download(repo)
+    console.print(f"[green]✓[/green] Whisper model ready at {path}")
+    console.print(f"Approved media folders (AF_MEDIA_DIRS): {', '.join(settings.media_dirs)}")
+
+
+@media_app.command("status")
+def media_status() -> None:
+    """Show whether local transcription is ready."""
+    from ..tools.builtin.video import media_readiness
+
+    problems = media_readiness(get_settings())
+    for problem in problems:
+        console.print(f"[yellow]![/yellow] {problem}")
+    if not problems:
+        console.print("[green]✓[/green] local transcription ready")
