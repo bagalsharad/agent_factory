@@ -43,6 +43,43 @@ Most agent prototypes let a model decide what it may do. Agent Factory inverts t
 | Dashboard | React + TypeScript: dashboard, catalog, designer, agent detail, workflow visualizer, execution monitor, approvals, evaluation lab, models, tools/templates, knowledge, settings, audit |
 | Operations | CLI (`agent-factory doctor/init/serve/worker/...`), Makefile, Docker image, Compose stack (Postgres, workers, Caddy TLS), backups, GitHub Actions CI |
 
+## Screenshots
+
+The dashboard at `http://127.0.0.1:8787` after `agent-factory init`, using the example agents and the built-in mock model.
+
+**Dashboard**: agents, recent executions, pending approvals, runtime and model health.
+
+![Dashboard](docs/images/screenshots/dashboard.png)
+
+<table>
+  <tr>
+    <td width="50%">
+      <b>Agent Designer</b>: guided 7-step editor with live validation and a workflow preview.<br/>
+      <a href="docs/images/screenshots/agent-designer.png"><img src="docs/images/screenshots/agent-designer.png" alt="Agent Designer"/></a>
+    </td>
+    <td width="50%">
+      <b>Agent detail</b>: spec, tools, workflow, permissions, versions and evaluations for one agent.<br/>
+      <a href="docs/images/screenshots/agent-detail.png"><img src="docs/images/screenshots/agent-detail.png" alt="Agent detail"/></a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <b>Execution monitor</b>: live workflow graph; this run is paused at a step that needs approval.<br/>
+      <a href="docs/images/screenshots/execution-monitor.png"><img src="docs/images/screenshots/execution-monitor.png" alt="Execution monitor"/></a>
+    </td>
+    <td width="50%">
+      <b>Approvals</b>: a human approves or rejects a high-risk action, with the policy evidence.<br/>
+      <a href="docs/images/screenshots/approvals.png"><img src="docs/images/screenshots/approvals.png" alt="Approvals"/></a>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2">
+      <b>Evaluation Lab</b>: per-case results, metrics and acceptance gates that decide whether a version can be published.<br/>
+      <a href="docs/images/screenshots/evaluation-lab.png"><img src="docs/images/screenshots/evaluation-lab.png" alt="Evaluation Lab"/></a>
+    </td>
+  </tr>
+</table>
+
 ## Architecture
 
 ```mermaid
