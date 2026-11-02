@@ -1,0 +1,5 @@
+2026-10-30T10:30:00Z INFO  Starting customer_sync
+2026-10-30T10:31:12Z INFO  Extracted 18233411 rows (backfill mode)
+2026-10-30T10:39:40Z WARN  Executor memory usage at 97%
+2026-10-30T10:40:02Z ERROR Container killed: OOMKilled (out of memory, limit 2g)
+2026-10-30T10:40:02Z FATAL Pipeline failed with exit code 137

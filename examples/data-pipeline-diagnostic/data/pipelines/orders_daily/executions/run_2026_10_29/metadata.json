@@ -1,0 +1,1 @@
+{"execution_id": "run_2026_10_29", "status": "failed", "started_at": "2026-10-29T02:00:03Z", "finished_at": "2026-10-29T02:04:17Z", "rows_read": 1291007, "rows_written": 0, "failed_stage": "load", "config": {"schema_version": "v14", "executor_memory": "4g"}, "upstream_change": "orders table migrated to schema v15 on 2026-10-28T18:30Z"}

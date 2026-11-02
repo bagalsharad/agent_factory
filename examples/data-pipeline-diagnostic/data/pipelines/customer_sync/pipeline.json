@@ -1,0 +1,1 @@
+{"pipeline_id": "customer_sync", "owner": "crm-integrations", "schedule": "*/30 * * * *", "source": "crm-api (sample)", "target": "warehouse.crm.customers", "engine": "python", "tier": "silver"}

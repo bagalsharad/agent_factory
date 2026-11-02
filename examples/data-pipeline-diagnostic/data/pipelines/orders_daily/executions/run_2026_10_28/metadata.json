@@ -1,0 +1,1 @@
+{"execution_id": "run_2026_10_28", "status": "succeeded", "started_at": "2026-10-28T02:00:04Z", "finished_at": "2026-10-28T02:11:39Z", "rows_read": 1284112, "rows_written": 1284112, "config": {"schema_version": "v14", "executor_memory": "4g"}}

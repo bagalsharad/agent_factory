@@ -1,0 +1,1 @@
+{"execution_id": "run_2026_10_30", "status": "failed", "failed_stage": "transform", "rows_read": 18233411, "rows_written": 0, "config": {"executor_memory": "2g", "partitions": 4}}

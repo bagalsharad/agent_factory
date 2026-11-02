@@ -1,0 +1,1 @@
+{"pipeline_id": "orders_daily", "owner": "data-platform", "schedule": "0 2 * * *", "source": "postgres://orders-replica (sample)", "target": "warehouse.analytics.orders", "engine": "spark", "tier": "gold"}

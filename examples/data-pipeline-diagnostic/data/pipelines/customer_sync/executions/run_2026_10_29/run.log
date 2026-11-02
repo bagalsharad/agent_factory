@@ -1,0 +1,4 @@
+2026-10-29T10:30:00Z INFO  Starting customer_sync
+2026-10-29T10:30:01Z ERROR HTTP 403 Forbidden from crm-api /v2/customers: permission denied (token expired)
+2026-10-29T10:30:01Z ERROR Authentication failed for service identity svc-crm-sync
+2026-10-29T10:30:01Z FATAL Pipeline failed with exit code 4

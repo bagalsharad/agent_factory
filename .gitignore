@@ -17,7 +17,7 @@ web/node_modules/
 web/dist/
 
 # Local state — never commit databases, execution logs, secrets or models
-data/
+/data/
 *.db
 *.db-shm
 *.db-wal

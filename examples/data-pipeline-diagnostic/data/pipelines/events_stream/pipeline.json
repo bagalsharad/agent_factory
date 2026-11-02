@@ -1,0 +1,1 @@
+{"pipeline_id": "events_stream", "owner": "growth-analytics", "schedule": "continuous", "source": "kafka://events (sample)", "target": "warehouse.events.raw", "engine": "flink", "tier": "bronze"}

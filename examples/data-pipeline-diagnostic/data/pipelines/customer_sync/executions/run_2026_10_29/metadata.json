@@ -1,0 +1,1 @@
+{"execution_id": "run_2026_10_29", "status": "failed", "failed_stage": "extract", "rows_read": 0, "rows_written": 0, "credential": "secret://crm_api_token", "credential_rotated_at": "2026-09-29T00:00:00Z", "credential_ttl_days": 30}

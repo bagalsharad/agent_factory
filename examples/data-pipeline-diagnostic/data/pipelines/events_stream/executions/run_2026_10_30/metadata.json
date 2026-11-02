@@ -1,0 +1,1 @@
+{"execution_id": "run_2026_10_30", "status": "failed", "failed_stage": "deserialize", "rows_read": 50210, "rows_written": 48900, "dead_letter_rows": 1310}
