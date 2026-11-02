@@ -78,10 +78,10 @@ def youtube_id(source: str) -> str | None:
     return candidate if VIDEO_ID.match(candidate) else None
 
 
-def build_chunks(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Group segments into model-sized chunks (at most MAX_CHUNKS) that keep their start times."""
+def build_chunks(segments: list[dict[str, Any]], max_chunks: int = MAX_CHUNKS) -> list[dict[str, Any]]:
+    """Group segments into model-sized chunks (at most ``max_chunks``) that keep their start times."""
     total = sum(len(s["text"]) + 1 for s in segments)
-    target = max(CHUNK_CHARS, math.ceil(total / MAX_CHUNKS))
+    target = max(CHUNK_CHARS, math.ceil(total / max(1, max_chunks)))
     chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     size = 0
@@ -333,32 +333,105 @@ class GetVideoTranscript(Tool):
         return "www.youtube.com" if youtube_id(str(arguments.get("source", ""))) else None
 
     def run(self, args: TranscriptInput, ctx: ToolContext) -> dict[str, Any]:
-        languages = [
-            lang for lang in (args.languages or ["en"]) if re.match(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$", lang)
-        ]
-        source = args.source.strip()
-        if source.startswith("fixture:"):
-            data = _fixture(source.removeprefix("fixture:"), ctx.settings)
-        elif vid := youtube_id(source):
-            data = _youtube(vid, languages, ctx.settings)
-        elif "://" in source:
-            raise ToolError("Only YouTube URLs are supported for online videos", details={"code": "unsupported_url"})
-        else:
-            data = _local_file(
-                _approved_media_path(source, ctx.settings), languages, ctx.settings, self.timeout_seconds - 30
+        return fetch_transcript(args.source, args.languages, ctx.settings, self.timeout_seconds - 30)
+
+
+def _clean_languages(languages: list[str] | None) -> list[str]:
+    return [lang for lang in (languages or ["en"]) if re.match(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?$", lang)]
+
+
+def fetch_transcript(
+    source: str,
+    languages: list[str] | None,
+    settings: Settings,
+    timeout: float,
+    max_chunks: int = MAX_CHUNKS,
+) -> dict[str, Any]:
+    """Transcript for one source (YouTube, approved local file or fixture) with chunks and Markdown."""
+    langs = _clean_languages(languages)
+    source = source.strip()
+    if source.startswith("fixture:"):
+        data = _fixture(source.removeprefix("fixture:"), settings)
+    elif vid := youtube_id(source):
+        data = _youtube(vid, langs, settings)
+    elif "://" in source:
+        raise ToolError("Only YouTube URLs are supported for online videos", details={"code": "unsupported_url"})
+    else:
+        data = _local_file(_approved_media_path(source, settings), langs, settings, timeout)
+    segments = data["segments"]
+    if not segments:
+        raise ToolError("The transcript is empty")
+    duration = int(segments[-1]["end"])
+    return {
+        **data,
+        "duration_seconds": duration,
+        "duration_label": fmt_ts(duration),
+        "word_count": sum(len(s["text"].split()) for s in segments),
+        "chunks": build_chunks(segments, max_chunks),
+        "transcript_markdown": transcript_markdown(segments),
+    }
+
+
+class TranscriptsInput(BaseModel):
+    sources: list[str] | None = Field(
+        None, max_length=5, description="Up to 5 YouTube URLs/ids, approved local media paths, or fixture:<name>."
+    )
+    languages: list[str] | None = Field(None, max_length=5, description="Preferred caption languages, e.g. ['en'].")
+
+
+class GetVideoTranscripts(Tool):
+    name = "get_video_transcripts"
+    description = (
+        "Get transcripts for several videos at once (YouTube captions or local Whisper) as one list of labelled "
+        "chunks. An empty list of sources returns no chunks."
+    )
+    connector = "video"
+    Input = TranscriptsInput
+    risk = RiskLevel.LOW
+    side_effects = SideEffect.READ
+    network = True
+    timeout_seconds = 3600.0
+    max_output_chars = 2_500_000
+    audit = AuditConfig(log_arguments=True, log_output=False)
+    output_schema = {
+        "type": "object",
+        "required": ["videos", "chunks", "count"],
+        "properties": {"videos": {"type": "array"}, "chunks": {"type": "array"}},
+    }
+
+    def network_destination(self, arguments: dict[str, Any], settings: Settings) -> str | None:
+        sources = arguments.get("sources") or []
+        return "www.youtube.com" if any(youtube_id(str(s)) for s in sources) else None
+
+    def run(self, args: TranscriptsInput, ctx: ToolContext) -> dict[str, Any]:
+        sources = [s.strip() for s in args.sources or [] if s and s.strip()]
+        per_video = max(2, MAX_CHUNKS // max(1, len(sources)))  # keep the total number of model calls bounded
+        videos: list[dict[str, Any]] = []
+        chunks: list[dict[str, Any]] = []
+        for number, source in enumerate(sources, 1):
+            data = fetch_transcript(source, args.languages, ctx.settings, self.timeout_seconds - 30, per_video)
+            title = str(data.get("title") or f"Video {number}")[:200]
+            videos.append(
+                {
+                    "number": number,
+                    "title": title,
+                    "url": data.get("url"),
+                    "file": data.get("file"),
+                    "duration_label": data["duration_label"],
+                    "word_count": data["word_count"],
+                    "captions": data.get("captions"),
+                }
             )
-        segments = data["segments"]
-        if not segments:
-            raise ToolError("The transcript is empty")
-        duration = int(segments[-1]["end"])
-        return {
-            **data,
-            "duration_seconds": duration,
-            "duration_label": fmt_ts(duration),
-            "word_count": sum(len(s["text"].split()) for s in segments),
-            "chunks": build_chunks(segments),
-            "transcript_markdown": transcript_markdown(segments),
-        }
+            for chunk in data["chunks"]:
+                chunks.append(
+                    {
+                        **chunk,
+                        "video_number": number,
+                        "video_title": title,
+                        "label": f"{title} @ {chunk['start_label']}",
+                    }
+                )
+        return {"videos": videos, "chunks": chunks, "count": len(videos)}
 
 
 class SaveNotesInput(BaseModel):

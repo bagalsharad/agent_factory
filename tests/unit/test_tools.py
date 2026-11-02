@@ -30,7 +30,7 @@ def executor() -> ToolExecutor:
 def test_builtin_registry_has_definitions_with_contracts() -> None:
     registry = build_default_registry()
     definitions = {d.name: d for d in registry.definitions()}
-    assert len(definitions) == 21
+    assert len(definitions) == 24
     for d in definitions.values():
         assert d.input_schema["type"] == "object"
         assert d.timeout_seconds > 0

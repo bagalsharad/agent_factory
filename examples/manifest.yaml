@@ -11,3 +11,4 @@ agents:
   - pipeline-remediation/agent.yaml
   - email-digest/agent.yaml
   - video-summarizer/agent.yaml
+  - interview-prep/agent.yaml

@@ -60,6 +60,8 @@ Per-agent secrets for connectors are stored through the secret backend (`AF_SECR
 | `AF_SANDBOX_IMAGE` | `"python:3.12-slim"` |  |
 | `AF_DISABLED_TOOLS` | `[]` |  |
 | `AF_MCP_CONFIG_FILE` | `null` |  |
+| `AF_DOCUMENT_DIRS` | `["~/Documents", "~/Downloads", "~/Desktop"]` | Folders the Interview Prep agent may read resumes, job descriptions and feedback from |
+| `AF_INTERVIEW_PREP_DIR` | `~/Documents/InterviewPrep` | Where the Interview Prep agent writes `resume.docx`, `resume.pdf` and `prep-guide.md` |
 | `AF_CAPTURE_CONTENT` | `true` |  |
 | `AF_TELEMETRY_EXPORTER` | `"none"` |  |
 | `AF_OTLP_ENDPOINT` | `null` |  |

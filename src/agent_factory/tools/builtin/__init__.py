@@ -9,9 +9,10 @@ from .compute import ComputeStatistics
 from .documents import ListDocuments, ReadDocument, SearchDocuments
 from .email import FetchRecentEmails, NotifyDesktop, SaveDigestFile, SendDigestToSelf
 from .http import HttpGet
+from .interview import LoadInterviewMaterials, SaveInterviewPrep
 from .pipeline import InspectExecutionMetadata, ListPipelineExecutions, ReadPipelineLogs
 from .sandbox_exec import PythonSandboxExec
-from .video import GetVideoTranscript, SaveVideoNotes
+from .video import GetVideoTranscript, GetVideoTranscripts, SaveVideoNotes
 
 BUILTIN_TOOLS: list[Callable[[], Tool]] = [
     ReadPipelineLogs,
@@ -35,6 +36,9 @@ BUILTIN_TOOLS: list[Callable[[], Tool]] = [
     NotifyDesktop,
     GetVideoTranscript,
     SaveVideoNotes,
+    GetVideoTranscripts,
+    LoadInterviewMaterials,
+    SaveInterviewPrep,
 ]
 
 __all__ = ["BUILTIN_TOOLS"]
