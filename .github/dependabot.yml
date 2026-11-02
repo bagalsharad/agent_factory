@@ -6,6 +6,10 @@ updates:
   - package-ecosystem: npm
     directory: /web
     schedule: {interval: weekly}
+    ignore:
+      # typescript-eslint supports TypeScript <6.1 only; revisit when it supports 7.x
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: uv
     directory: /
     schedule: {interval: weekly}
