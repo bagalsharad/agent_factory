@@ -17,6 +17,29 @@
           "title": "Required Cases",
           "type": "array"
         },
+        "mandatory_kinds": {
+          "description": "Case kinds that must all pass regardless of min_pass_rate (security cases by default).",
+          "items": {
+            "enum": [
+              "functional",
+              "input_validation",
+              "output_schema",
+              "tool_selection",
+              "tool_invocation",
+              "permission",
+              "prompt_injection",
+              "workflow_recovery",
+              "timeout",
+              "model_failure",
+              "regression",
+              "performance",
+              "human_review"
+            ],
+            "type": "string"
+          },
+          "title": "Mandatory Kinds",
+          "type": "array"
+        },
         "max_avg_latency_ms": {
           "anyOf": [
             {
@@ -28,6 +51,55 @@
           ],
           "default": null,
           "title": "Max Avg Latency Ms"
+        },
+        "max_p95_latency_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max P95 Latency Ms"
+        },
+        "max_cost_usd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Total model cost of the run.",
+          "title": "Max Cost Usd"
+        },
+        "regression": {
+          "default": "block",
+          "description": "Cases that pass in the published version and fail in this one: block release, warn, or ignore.",
+          "enum": [
+            "block",
+            "warn",
+            "off"
+          ],
+          "title": "Regression",
+          "type": "string"
+        },
+        "judge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "Acceptance",
@@ -416,6 +488,12 @@
           "title": "Cases",
           "type": "array"
         },
+        "security_suite": {
+          "default": false,
+          "description": "Add the platform's reusable security cases (compromised model, injected input) to the suite.",
+          "title": "Security Suite",
+          "type": "boolean"
+        },
         "acceptance": {
           "$ref": "#/$defs/Acceptance"
         }
@@ -460,6 +538,21 @@
           "minimum": 0,
           "title": "Max Retries",
           "type": "integer"
+        },
+        "max_total_retries": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Retry budget for the whole execution (model, tool and validation retries).",
+          "title": "Max Total Retries"
         },
         "max_context_tokens": {
           "default": 16000,
@@ -530,6 +623,81 @@
         }
       },
       "title": "HumanApproval",
+      "type": "object"
+    },
+    "JudgeCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,59}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 3,
+          "title": "Description",
+          "type": "string"
+        },
+        "weight": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "JudgeCriterion",
+      "type": "object"
+    },
+    "JudgeSpec": {
+      "additionalProperties": false,
+      "description": "LLM-as-judge: an additional, advisory quality signal from an independent model.\n\nIt never changes a case's deterministic result. With ``min_score`` set, a low average score blocks release;\na judge failure counts as no score (fail closed).",
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/JudgeCriterion"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Criteria",
+          "type": "array"
+        },
+        "min_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Score"
+        },
+        "cases": {
+          "description": "Case ids to judge; empty = every graded case.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Cases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "criteria"
+      ],
+      "title": "JudgeSpec",
       "type": "object"
     },
     "KnowledgeMemory": {
@@ -718,6 +886,21 @@
           "maximum": 3600,
           "title": "Timeout Seconds",
           "type": "number"
+        },
+        "max_retries": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Overrides execution_limits.max_retries.",
+          "title": "Max Retries"
         }
       },
       "title": "ModelSpec",
@@ -840,6 +1023,21 @@
           ],
           "default": null,
           "title": "Version"
+        },
+        "max_retries": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Overrides execution_limits.max_retries (idempotent tools only).",
+          "title": "Max Retries"
         }
       },
       "required": [
@@ -945,9 +1143,52 @@
         },
         "structured": {
           "default": false,
-          "description": "Request output conforming to spec.outputs.",
+          "description": "Request output conforming to spec.outputs (or output_schema).",
           "title": "Structured",
           "type": "boolean"
+        },
+        "output_schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-step JSON Schema for structured output.",
+          "title": "Output Schema"
+        },
+        "foreach": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "model steps: template resolving to a list; the step runs once per item ({{ item.<field> }}); item.text is supplied to the model as untrusted content.",
+          "title": "Foreach"
+        },
+        "include_steps": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Earlier steps whose outputs enter this step's context (default: all; foreach: none).",
+          "title": "Include Steps"
         },
         "tools": {
           "anyOf": [

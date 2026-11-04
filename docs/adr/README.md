@@ -12,3 +12,7 @@
 | [0008](0008-deterministic-mock-provider.md) | Deterministic mock model provider for tests, demos and CI |
 | [0009](0009-spa-served-by-api.md) | React SPA built with Vite and served by the API |
 | [0010](0010-optional-cloud-providers.md) | Cloud model providers are optional adapters, disabled by default |
+| [0011](0011-policy-engine-stays-in-process.md) | Keep the in-process policy engine; no OPA for now |
+| [0012](0012-mcp-tools-are-governed-tools.md) | MCP tools are registered as ordinary governed tools |
+| [0013](0013-operational-metrics-computed-on-read.md) | Operational metrics, SLOs, drift and alerts are computed on read |
+| [0014](0014-releases-in-the-platform-database.md) | Release artifacts, environments and deployments live in the platform database |

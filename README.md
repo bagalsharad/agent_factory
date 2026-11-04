@@ -36,10 +36,12 @@ Most agent prototypes let a model decide what it may do. Agent Factory inverts t
 | AI harness | Context engineering with untrusted-content delimiting and token budgets, model gateway calls with retries/timeouts, policy-filtered tool discovery, idempotent tool invocation, output validation, budgets, cancellation |
 | Runtime | LangGraph workflows: single agent, sequential multi-agent, supervisor + specialists; checkpointing in the platform DB; pause/resume; crash recovery |
 | Model gateway | Deterministic mock (tests/demos), Ollama, OpenAI-compatible, optional Claude API — capability-aware, local-first |
-| Tools | 24 registered tools: video transcripts (YouTube captions, local Whisper) and notes, interview materials (resume / job description / feedback from PDF, Word or text) and Word + PDF resume output, read-only email (IMAP), send-to-self email, digest files, desktop notifications, pipeline evidence, workspace knowledge, code artifacts (read-only + static scanner), statistics, allowlisted REST (SSRF-protected), simulated write actions, sandboxed code execution (refused without a sandbox) |
-| Governance | RBAC (admin, developer, operator, evaluator, viewer), workspaces, local / API-key / OIDC auth, policy engine, approvals with separation of duties, hash-chained audit log, secret stores, data retention |
-| Evaluation | Functional, schema, tool-selection, permission, prompt-injection, recovery, timeout, model-failure, regression, performance and human-review cases; metrics; acceptance gates; version comparison |
-| Observability | Structured JSON logs with correlation IDs, persisted execution events, OpenTelemetry spans (exporter off by default), live workflow visualizer |
+| Tools | 24 registered tools: video transcripts (YouTube captions, local Whisper) and notes, interview materials (resume / job description / feedback from PDF, Word or text) and Word + PDF resume output, read-only email (IMAP), send-to-self email, digest files, desktop notifications, pipeline evidence, workspace knowledge, code artifacts (read-only + static scanner), statistics, allowlisted REST (SSRF-protected), simulated write actions, sandboxed code execution (refused without a sandbox); plus **MCP connectors** (stdio / Streamable HTTP) exposed as governed tools: explicit trust, allow-listing, default high risk + approval |
+| Governance | RBAC (admin, developer, operator, evaluator, viewer), workspaces, local / API-key / OIDC auth, policy engine, approvals with separation of duties, hash-chained audit log with external append-only sink and offline-verifiable export, secret stores (incl. Vault) with versioned rotation and access audit, policy simulation and history, data retention |
+| Evaluation | Functional, schema, tool-selection, permission, prompt-injection, recovery, timeout, model-failure, regression, performance and human-review cases; reusable security suite; backend-enforced release gates (mandatory security cases, regression vs. the published baseline, latency, cost); LLM-as-judge as an advisory signal; model and version comparison; run provenance |
+| Observability | Trace id on every execution, OpenTelemetry spans, execution timeline, metrics, agent health, SLOs with error budgets, drift, cost budgets, alerts, provider circuits |
+| Reliability | Crash-safe side effects (in-doubt calls are never repeated), dead letters, retry budgets, circuit breakers, checkpoint recovery |
+| Releases | Dependency graph and impact analysis, immutable hashed artifacts, development/test/staging/production, approval with separation of duties, canary, rollback |
 | Dashboard | React + TypeScript: dashboard, catalog, designer, agent detail, workflow visualizer, execution monitor, approvals, evaluation lab, models, tools/templates, knowledge, settings, audit |
 | Operations | CLI (`agent-factory doctor/init/serve/worker/...`), Makefile, Docker image, Compose stack (Postgres, workers, Caddy TLS), backups, GitHub Actions CI |
 
@@ -182,7 +184,8 @@ Walkthrough: [docs/user-guide/walkthrough.md](docs/user-guide/walkthrough.md).
 - Security: [security model](docs/security/security-model.md), [threat model](docs/security/threat-model.md), [SECURITY.md](SECURITY.md)
 - Deployment: [production](docs/deployment/production.md), [backup & restore](docs/deployment/backup-restore.md), [operations](docs/deployment/operations.md)
 - Development: [setup](docs/development/setup.md), [testing](docs/development/testing.md), [CONTRIBUTING.md](CONTRIBUTING.md)
-- Product: [requirements](docs/product/prd.md), [backlog & status](docs/product/backlog.md), [limitations](docs/product/limitations.md), [roadmap](docs/product/roadmap.md)
+- Product: [requirements](docs/product/prd.md), [backlog & status](docs/product/backlog.md), [limitations](docs/product/limitations.md), [roadmap](docs/product/roadmap.md), [production roadmap](docs/product/production-roadmap.md), [implementation status](docs/product/implementation-status.md)
+- Production: [architecture](docs/architecture/production-architecture.md), [evaluation](docs/architecture/evaluation-architecture.md), [runtime reliability](docs/architecture/runtime-reliability.md), [dependencies](docs/architecture/dependency-management.md), [observability](docs/architecture/observability.md), [agent CI/CD](docs/architecture/agent-cicd.md), [production security](docs/security/production-security.md), [production readiness](docs/deployment/production-readiness.md)
 
 ## Security model (summary)
 
@@ -195,7 +198,7 @@ wrapped as untrusted data, but **prompt injection is mitigated at the policy bou
 
 ## Implementation status
 
-Evidence references the automated test suite (`make test`: 130 backend tests passing + 2 opt-in skipped, 8 frontend tests; deterministic
+Evidence references the automated test suite (`make test`: 209 backend tests passing + 2 opt-in skipped, 10 frontend tests; deterministic
 mock model unless noted).
 
 | Area | Status | Evidence |
@@ -205,14 +208,16 @@ mock model unless noted).
 | Agent builder | Implemented | `tests/integration/test_lifecycle_and_evaluation.py::test_full_lifecycle_and_immutability` |
 | AI harness | Implemented | `tests/integration/test_runtime.py`, `tests/unit/test_harness_units.py` |
 | Multi-agent runtime | Implemented (supervisor + sequential; no nested delegation by design) | `test_supervisor_delegates_to_specialists`, `test_sequential_multi_agent_workflow` |
-| Tool framework | Implemented (MCP integration not implemented — roadmap) | `tests/unit/test_tools.py` |
+| Tool framework | Implemented, incl. MCP connectors | `tests/unit/test_tools.py`, `tests/integration/test_mcp_connectors.py` |
 | Governance | Implemented | `tests/unit/test_policy_and_rbac.py`, `tests/security/test_security.py` |
-| Evaluation | Implemented (LLM-as-judge not implemented — deterministic checks + human review) | `test_evaluation_metrics_and_human_review`, `test_version_comparison_on_same_suite` |
-| Observability | Implemented (OTLP export configurable, not validated against a collector here) | event/timeline tests, `test_probes_and_identity` |
+| Evaluation | Implemented: release gates, security suite, model comparison, LLM-as-judge (advisory) | `tests/integration/test_release_gates.py`, `test_evaluation_signals.py` |
+| Reliability | Implemented (single node) | `tests/integration/test_runtime_reliability.py` |
+| Dependencies & releases | Implemented | `test_dependencies.py`, `test_releases.py`, `tests/e2e/test_release_journey.py` |
+| Observability | Implemented (OTLP export configurable, not validated against a collector here) | `tests/integration/test_operations.py` |
 | UI | Implemented | `web/src/test/*` (Vitest), manual verification of all screens |
 | Production packaging | Implemented and validated locally (Compose: Postgres + API + worker + Caddy TLS); clean Linux host not yet validated | [validation record](docs/deployment/production.md#validation-record) |
 | Automated tests | Implemented; full suite also passes on PostgreSQL | `make test`; `AF_TEST_POSTGRES_ADMIN_URL=... uv run pytest` |
-| GitHub readiness | Implemented (workflows authored, not yet run on GitHub) | `.github/workflows/*` |
+| GitHub readiness | Implemented; CI, Security and Container workflows run on every push (incl. Trivy image scan) | `.github/workflows/*` |
 
 ## Contributing
 
