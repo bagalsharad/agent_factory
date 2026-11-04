@@ -13,21 +13,27 @@ from typing import Any
 from sqlalchemy import select
 
 from .builder.builder import AgentBuilder
+from .connectors.service import MCPService
+from .core.circuit import CircuitRegistry
 from .core.config import Settings, WorkerMode, get_settings
 from .core.ids import content_hash
 from .core.logging import get_logger
 from .evaluation.service import EvaluationService
 from .governance.approvals import ApprovalService
-from .governance.audit import AuditLog
+from .governance.audit import AuditLog, FileAuditSink
 from .governance.identity import IdentityService
 from .governance.policy import PolicyEngine
-from .governance.secrets import SecretStore, build_secret_store
+from .governance.secrets import AuditedSecretStore, SecretStore, build_secret_store
+from .governance.simulation import PolicySimulator
 from .harness.harness import GovernedHarness
 from .memory.conversation import AgentMemory, ConversationMemory
 from .memory.knowledge import KnowledgeService
 from .model_gateway.gateway import ModelGateway
+from .observability.operations import OperationsService
 from .registry.agents import AgentService
 from .registry.components import ComponentRegistry
+from .registry.dependencies import DependencyService
+from .registry.releases import ReleaseService
 from .registry.templates import TemplateRegistry
 from .runtime.dispatcher import DatabaseQueueDispatcher
 from .runtime.executor import ExecutionService
@@ -51,13 +57,18 @@ class Platform:
         self.settings = s = settings or get_settings()
         s.data_dir.mkdir(parents=True, exist_ok=True)
         self.db = Database(s)
+        self.db.audit_sink = FileAuditSink(s.audit_sink_path) if s.audit_sink_path else None
         self.artifacts = LocalArtifactStore(s.artifacts_dir)
         self.audit = AuditLog(self.db)
         self.identity = IdentityService(s, self.db)
-        self.secrets: SecretStore = build_secret_store(s)
+        self.secrets: SecretStore = AuditedSecretStore(build_secret_store(s), self.audit)
         self.tools = build_default_registry(s.disabled_tools)
-        self.tool_executor = ToolExecutor()
-        self.gateway = ModelGateway(s)
+        self.connectors = MCPService(self.db, self.audit, s, self.tools, self.secrets)
+        self.circuits = CircuitRegistry(
+            failure_threshold=s.circuit_failure_threshold, recovery_seconds=s.circuit_recovery_seconds
+        )
+        self.tool_executor = ToolExecutor(circuits=self.circuits)
+        self.gateway = ModelGateway(s, circuits=self.circuits)
         self.sandbox = build_sandbox(s)
         self.policy = PolicyEngine(s)
         self.validator = SpecValidator(self.tools, self.gateway, sandbox_available=self.sandbox.available()[0])
@@ -68,6 +79,12 @@ class Platform:
         self.agent_memory = AgentMemory(self.db)
         # --- control plane
         self.agents = AgentService(self.db, self.audit, self.validator)
+        self.dependencies = DependencyService(self.db, self.audit, self.tools)
+        self.policy_simulator = PolicySimulator(self.policy, self.tools, self.agents, self.sandbox.available()[0])
+        self.agents.dependencies = self.dependencies
+        self.releases = ReleaseService(self.db, self.audit, s)
+        self.agents.releases = self.releases
+        self.releases.dependency_blockers = self.dependencies.blockers
         self.builder = AgentBuilder(
             db=self.db,
             validator=self.validator,
@@ -104,7 +121,17 @@ class Platform:
             policy=self.policy,
             conversation=self.conversation,
         )
-        self.evaluations = EvaluationService(self.db, self.agents, self.executions, self.audit)
+        self.operations = OperationsService(self.db, self.audit, self.gateway, self.circuits)
+        self.evaluations = EvaluationService(
+            self.db,
+            self.agents,
+            self.executions,
+            self.audit,
+            settings=s,
+            tool_versions=lambda names: {n: self.tools.get(n).definition.version for n in names if self.tools.has(n)},
+            tool_catalog=lambda: {d.name: d for d in self.tools.definitions()},
+            gateway=self.gateway,
+        )
         self.dispatcher = DatabaseQueueDispatcher(
             self.executions,
             concurrency=s.worker_concurrency,
@@ -139,8 +166,16 @@ class Platform:
         self.identity.bootstrap()
         self.templates.sync_builtin()
         self.components.seed_builtin()
+        self.connectors.sync_registry()  # trusted MCP servers' allow-listed tools (no network at start-up)
         self._sync_tool_definitions()
         self._apply_runtime_settings()
+        self.dependencies.backfill()
+        self.releases.backfill()  # after dependencies: artifacts include resolved dependency edges
+        self.executions.budget_guard = self.operations.enforce_budgets
+        self.executions.deployment_resolver = self.releases.resolve
+        self.dependencies.revalidate_runner = lambda p, agent_id, version: self.evaluations.start_run(
+            p, agent_id, version=version
+        )
 
     def _apply_runtime_settings(self) -> None:
         from .storage.models import ConfigMetadata

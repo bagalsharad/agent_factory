@@ -17,6 +17,7 @@ import os
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from ..core.config import Settings
 from ..core.errors import NotFoundError, ValidationFailedError
@@ -137,9 +138,101 @@ class FileSecretStore(SecretStore):
         self._save(data)
 
 
+class VaultSecretStore(SecretStore):
+    """HashiCorp Vault KV v2. The token comes from VAULT_TOKEN in the process environment and is never stored."""
+
+    backend = "vault"
+
+    def __init__(
+        self,
+        addr: str,
+        mount: str = "secret",
+        prefix: str = "agent-factory",
+        *,
+        token: str | None = None,
+        namespace: str | None = None,
+        transport: Any = None,
+    ) -> None:
+        import httpx
+
+        token = token or os.environ.get("VAULT_TOKEN")
+        if not token:
+            raise ValidationFailedError("secrets_backend=vault needs VAULT_TOKEN in the environment")
+        headers = {"X-Vault-Token": token}
+        if namespace or os.environ.get("VAULT_NAMESPACE"):
+            headers["X-Vault-Namespace"] = namespace or os.environ["VAULT_NAMESPACE"]
+        self._client = httpx.Client(base_url=addr.rstrip("/"), headers=headers, timeout=10, transport=transport)
+        self._mount, self._prefix = mount.strip("/"), prefix.strip("/")
+
+    def _path(self, kind: str, name: str) -> str:
+        return f"/v1/{self._mount}/{kind}/{self._prefix}/{name}"
+
+    def _check_response(self, response: Any, name: str) -> None:
+        if response.status_code == 404:
+            raise NotFoundError(f"Secret '{name}' is not configured")
+        if response.status_code >= 400:  # never echo the body: it may contain request data
+            raise ValidationFailedError(f"Vault returned HTTP {response.status_code} for secret '{name}'")
+
+    def get(self, name: str) -> str:
+        _check(name)
+        response = self._client.get(self._path("data", name))
+        self._check_response(response, name)
+        value = ((response.json().get("data") or {}).get("data") or {}).get("value")
+        if not isinstance(value, str):
+            raise NotFoundError(f"Secret '{name}' has no 'value' field")
+        return value
+
+    def set(self, name: str, value: str) -> None:
+        _check(name)
+        self._check_response(self._client.post(self._path("data", name), json={"data": {"value": value}}), name)
+
+    def delete(self, name: str) -> None:
+        _check(name)
+        response = self._client.delete(self._path("metadata", name))
+        if response.status_code != 404:
+            self._check_response(response, name)
+
+
+class AuditedSecretStore(SecretStore):
+    """Records who-read-what (names only, never values). Repeated reads of one secret are summarized."""
+
+    def __init__(self, inner: SecretStore, audit: Any, *, window_seconds: float = 300.0) -> None:
+        import threading
+        import time
+
+        self.inner = inner
+        self.backend = inner.backend
+        self.audit = audit
+        self.window = window_seconds
+        self._clock = time.monotonic
+        self._last: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def get(self, name: str) -> str:
+        value = self.inner.get(name)
+        with self._lock:
+            now = self._clock()
+            due = now - self._last.get(name, -1e18) >= self.window
+            if due:
+                self._last[name] = now
+        if due:
+            self.audit.record("secret.access", "secret", name, details={"backend": self.backend})
+        return value
+
+    def set(self, name: str, value: str) -> None:
+        self.inner.set(name, value)
+
+    def delete(self, name: str) -> None:
+        self.inner.delete(name)
+
+
 def build_secret_store(settings: Settings) -> SecretStore:
     if settings.secrets_backend == "keyring":
         return KeyringSecretStore()
     if settings.secrets_backend == "file":
         return FileSecretStore(settings.data_dir)
+    if settings.secrets_backend == "vault":
+        if not settings.vault_addr:
+            raise ValidationFailedError("secrets_backend=vault needs AF_VAULT_ADDR")
+        return VaultSecretStore(settings.vault_addr, settings.vault_mount, settings.vault_prefix)
     return EnvSecretStore()

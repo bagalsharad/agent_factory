@@ -75,6 +75,7 @@ class BudgetTracker:
 
     def record_retry(self) -> None:
         self.usage["retries"] += 1
+        self._check("max_total_retries", self.usage["retries"], self.limits.max_total_retries)
 
     def before_delegation(self) -> None:
         self.check_time()

@@ -52,6 +52,7 @@ class Database:
             settings.data_dir.mkdir(parents=True, exist_ok=True)
             kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
         self.engine: Engine = create_engine(url, **kwargs)
+        self.audit_sink: Any = None  # optional external append-only copy of the audit chain
         if url.startswith("sqlite"):
             event.listen(self.engine, "connect", _sqlite_pragmas)
         self._factory = sessionmaker(bind=self.engine, expire_on_commit=False)

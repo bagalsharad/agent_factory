@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     worker_concurrency: int = 2
     worker_poll_interval_seconds: float = 0.5
     worker_heartbeat_stale_seconds: float = 60.0
+    circuit_failure_threshold: int = Field(
+        5, ge=1, le=100, description="Consecutive failures that open a model-provider or network-tool circuit"
+    )
+    circuit_recovery_seconds: float = Field(30.0, gt=0, le=3600, description="How long a circuit stays open")
+    max_execution_attempts: int = Field(
+        3, ge=1, le=50, description="Worker crashes tolerated per execution before it is dead-lettered for an operator"
+    )
     default_max_steps: int = 20
     default_timeout_seconds: int = 300
     approval_expiry_seconds: int = 24 * 3600
@@ -154,10 +161,31 @@ class Settings(BaseSettings):
     retention_days: int = 30
 
     # --- Secrets ---
-    secrets_backend: Literal["env", "keyring", "file"] = "env"
+    secrets_backend: Literal["env", "keyring", "file", "vault"] = "env"
+    vault_addr: str | None = Field(
+        None, description="HashiCorp Vault address (secrets_backend=vault); token from VAULT_TOKEN"
+    )
+    vault_mount: str = Field("secret", description="Vault KV v2 mount")
+    vault_prefix: str = Field("agent-factory", description="Path prefix for secrets inside the mount")
+
+    # --- Connectors (MCP) ---
+    mcp_allowed_commands: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, description="Executables that stdio MCP servers may run (empty: stdio servers refused)"
+    )
+
+    # --- Audit ---
+    audit_sink_path: Path | None = Field(
+        None, description="Append-only JSONL copy of every audit event (point it at WORM/immutable storage)"
+    )
 
     @field_validator(
-        "cors_origins", "network_allowlist", "disabled_tools", "media_dirs", "document_dirs", mode="before"
+        "cors_origins",
+        "network_allowlist",
+        "disabled_tools",
+        "media_dirs",
+        "document_dirs",
+        "mcp_allowed_commands",
+        mode="before",
     )
     @classmethod
     def _split_csv(cls, value: Any) -> Any:

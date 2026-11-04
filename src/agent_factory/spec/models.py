@@ -83,11 +83,15 @@ class ModelSpec(_Strict):
     max_output_tokens: int | None = Field(None, ge=1, le=200_000)
     required_capabilities: list[Capability] = Field(default_factory=lambda: list[Capability](["chat"]))
     timeout_seconds: float = Field(120, gt=0, le=3600)
+    max_retries: int | None = Field(None, ge=0, le=10, description="Overrides execution_limits.max_retries.")
 
 
 class ToolRef(_Strict):
     name: str = Field(min_length=1, max_length=120)
     version: str | None = None
+    max_retries: int | None = Field(
+        None, ge=0, le=10, description="Overrides execution_limits.max_retries (idempotent tools only)."
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -229,6 +233,9 @@ class ExecutionLimits(_Strict):
     max_tool_calls: int = Field(30, ge=0, le=1000)
     timeout_seconds: int = Field(300, ge=1, le=86_400)
     max_retries: int = Field(2, ge=0, le=10)
+    max_total_retries: int | None = Field(
+        None, ge=0, le=1000, description="Retry budget for the whole execution (model, tool and validation retries)."
+    )
     max_context_tokens: int = Field(16_000, ge=256, le=2_000_000)
     max_output_tokens: int = Field(2_048, ge=16, le=200_000)
     max_cost_usd: float | None = Field(None, ge=0)
@@ -269,6 +276,9 @@ EvalKind = Literal[
 ]
 
 
+MANDATORY_EVAL_KINDS: tuple[EvalKind, ...] = ("permission", "prompt_injection")
+
+
 class EvalExpectation(_Strict):
     status: str | None = "completed"
     output_schema_valid: bool | None = None
@@ -300,15 +310,49 @@ class EvalCaseSpec(_Strict):
     )
 
 
+class JudgeCriterion(_Strict):
+    name: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,59}$")]
+    description: str = Field(min_length=3, max_length=1000)
+    weight: float = Field(1.0, gt=0, le=10)
+
+
+class JudgeSpec(_Strict):
+    """LLM-as-judge: an additional, advisory quality signal from an independent model.
+
+    It never changes a case's deterministic result. With ``min_score`` set, a low average score blocks release;
+    a judge failure counts as no score (fail closed).
+    """
+
+    model: ModelSpec
+    criteria: list[JudgeCriterion] = Field(min_length=1, max_length=12)
+    min_score: float | None = Field(None, ge=0, le=1)
+    cases: list[str] = Field(default_factory=list, description="Case ids to judge; empty = every graded case.")
+
+
 class Acceptance(_Strict):
     min_pass_rate: float = Field(1.0, ge=0, le=1)
     required_cases: list[str] = Field(default_factory=list)
+    mandatory_kinds: list[EvalKind] = Field(
+        default_factory=lambda: list(MANDATORY_EVAL_KINDS),
+        description="Case kinds that must all pass regardless of min_pass_rate (security cases by default).",
+    )
     max_avg_latency_ms: float | None = None
+    max_p95_latency_ms: float | None = Field(None, ge=0)
+    max_cost_usd: float | None = Field(None, ge=0, description="Total model cost of the run.")
+    regression: Literal["block", "warn", "off"] = Field(
+        "block",
+        description="Cases that pass in the published version and fail in this one: block release, warn, or ignore.",
+    )
+    judge: JudgeSpec | None = None
 
 
 class EvaluationSpec(_Strict):
     suite: str | None = Field(None, description="Name of a registered evaluation suite.")
     cases: list[EvalCaseSpec] = Field(default_factory=list)
+    security_suite: bool = Field(
+        False,
+        description="Add the platform's reusable security cases (compromised model, injected input) to the suite.",
+    )
     acceptance: Acceptance = Field(default_factory=Acceptance)
 
 

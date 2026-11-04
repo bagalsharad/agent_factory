@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Response
@@ -10,7 +11,7 @@ from sqlalchemy import func, select
 
 from ... import __version__
 from ...core.errors import ValidationFailedError
-from ...core.ids import utcnow
+from ...core.ids import canonical_json, utcnow
 from ...spec.models import AgentSpec
 from ...storage.models import Agent, AgentVersion, ApiKey, AuditEvent, ConfigMetadata, SecretRef, Workspace
 from ..deps import PageDep, PlatformDep, PrincipalDep
@@ -140,6 +141,12 @@ def agent_spec_schema() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------- settings
+@router.get("/api/v1/system/circuits", summary="Circuit-breaker state of model providers and network tools")
+def circuits(platform: PlatformDep, principal: PrincipalDep) -> dict[str, Any]:
+    principal.require("settings:read")
+    return {"items": platform.circuits.snapshot(), "scope": "this process"}
+
+
 @router.get("/api/v1/system/settings")
 def get_settings_view(platform: PlatformDep, principal: PrincipalDep) -> dict[str, Any]:
     principal.require("settings:read")
@@ -214,6 +221,7 @@ def list_secrets(platform: PlatformDep, principal: PrincipalDep) -> dict[str, An
                 "backend": r.backend,
                 "configured": True,
                 "last_rotated_at": r.last_rotated_at.isoformat() if r.last_rotated_at else None,
+                "version": r.version,
             }
             for r in refs
         ],
@@ -237,12 +245,18 @@ def write_secret(payload: SecretWrite, platform: PlatformDep, principal: Princip
                     last_rotated_at=utcnow(),
                 )
             )
-        else:
-            ref.last_rotated_at = utcnow()
+        else:  # rotation: a new version of an existing secret
+            ref.last_rotated_at, ref.version = utcnow(), (ref.version or 1) + 1
+        version = ref.version if ref is not None else 1
     platform.audit.record(
-        "secret.write", "secret", payload.name, actor_id=principal.user_id, workspace_id=principal.workspace_id
+        "secret.rotate" if version > 1 else "secret.write",
+        "secret",
+        payload.name,
+        actor_id=principal.user_id,
+        workspace_id=principal.workspace_id,
+        details={"version": version, "backend": platform.secrets.backend},
     )
-    return {"name": payload.name, "configured": True}
+    return {"name": payload.name, "configured": True, "version": version}
 
 
 # ---------------------------------------------------------------------------- API keys
@@ -329,7 +343,36 @@ def audit_events(
 @router.get("/api/v1/audit/verify")
 def audit_verify(platform: PlatformDep, principal: PrincipalDep) -> dict[str, Any]:
     principal.require("audit:read")
-    return platform.audit.verify()
+    sink = platform.db.audit_sink
+    return {
+        **platform.audit.verify(),
+        "external_sink": {"path": str(sink.path), "write_failures": sink.failures} if sink else None,
+    }
+
+
+@router.get(
+    "/api/v1/audit/export",
+    summary="The audit chain as JSON Lines with hashes (verify offline with `agent-factory audit verify-export`)",
+    response_class=Response,
+)
+def audit_export(
+    platform: PlatformDep,
+    principal: PrincipalDep,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    after_seq: int = 0,
+) -> Response:
+    principal.require("audit:read")
+    lines = [canonical_json(r) for r in platform.audit.export(since=since, until=until, after_seq=after_seq)]
+    platform.audit.record(  # who exported the audit trail is itself audited
+        "audit.export",
+        "audit",
+        None,
+        actor_id=principal.user_id,
+        workspace_id=principal.workspace_id,
+        details={"events": len(lines), "after_seq": after_seq},
+    )
+    return Response("\n".join(lines) + ("\n" if lines else ""), media_type="application/x-ndjson")
 
 
 class PurgeRequest(BaseModel):

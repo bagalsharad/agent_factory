@@ -32,6 +32,15 @@ class Review(BaseModel):
     notes: str = Field("", max_length=2000)
 
 
+class ModelComparisonRequest(BaseModel):
+    agent_id: str
+    version: str | None = None
+    suite_id: str | None = None
+    models: list[dict[str, Any]] = Field(
+        min_length=1, max_length=6, description="Model configurations, e.g. {provider: ollama, model: qwen3:8b}."
+    )
+
+
 class CompareRequest(BaseModel):
     agent_id: str
     base: str
@@ -63,6 +72,27 @@ def review(
     run_id: str, result_id: str, payload: Review, platform: PlatformDep, principal: PrincipalDep
 ) -> dict[str, Any]:
     return platform.evaluations.review(principal, run_id, result_id, payload.passed, payload.notes)
+
+
+@router.get(
+    "/agents/{agent_id}/release-gate",
+    summary="Whether a version can be published, with every blocking reason (the rules publish enforces)",
+)
+def release_gate(
+    agent_id: str, platform: PlatformDep, principal: PrincipalDep, version: str | None = None
+) -> dict[str, Any]:
+    return platform.evaluations.release_gate(principal, agent_id, version)
+
+
+@router.post(
+    "/evaluations/model-comparison",
+    summary="Run one suite against several model configurations (comparison runs never gate publishing)",
+    dependencies=[Depends(rate_limited("evaluations"))],
+)
+def model_comparison(payload: ModelComparisonRequest, platform: PlatformDep, principal: PrincipalDep) -> dict[str, Any]:
+    return platform.evaluations.compare_models(
+        principal, payload.agent_id, payload.models, version=payload.version, suite_id=payload.suite_id
+    )
 
 
 @router.post("/evaluations/compare", summary="Run one suite against two versions and diff the results")

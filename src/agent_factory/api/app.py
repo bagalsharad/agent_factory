@@ -18,7 +18,20 @@ from ..observability.telemetry import configure_telemetry
 from ..platform import Platform, create_platform
 from .errors import install_error_handlers
 from .middleware import BodySizeLimitMiddleware, RequestContextMiddleware
-from .routers import agents, approvals, catalog, evaluations, executions, knowledge, platform
+from .routers import (
+    agents,
+    approvals,
+    catalog,
+    connectors,
+    dependencies,
+    evaluations,
+    executions,
+    knowledge,
+    operations,
+    platform,
+    policies,
+    releases,
+)
 
 log = get_logger(__name__)
 WEB_DIST = PROJECT_ROOT / "web" / "dist"
@@ -77,7 +90,20 @@ def create_app(
         expose_headers=["X-Request-ID"],
     )
     app.add_middleware(RequestContextMiddleware)
-    for module in (platform, agents, executions, approvals, evaluations, catalog, knowledge):
+    for module in (
+        platform,
+        agents,
+        executions,
+        approvals,
+        evaluations,
+        catalog,
+        knowledge,
+        dependencies,
+        operations,
+        connectors,
+        policies,
+        releases,
+    ):
         app.include_router(module.router)
     _mount_web(app, WEB_DIST)
     return app
