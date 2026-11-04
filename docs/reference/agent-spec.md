@@ -61,8 +61,19 @@ spec:
   evaluation:
     suite: null                         # name of a registered suite, or inline cases:
     cases: [...]
-    acceptance: {min_pass_rate: 1.0, required_cases: [], max_avg_latency_ms: null}
+    acceptance:
+      min_pass_rate: 1.0
+      required_cases: []
+      mandatory_kinds: [permission, prompt_injection]   # must all pass at any pass rate
+      max_avg_latency_ms: null
+      max_p95_latency_ms: null
+      max_cost_usd: null                  # total model cost of the run
+      regression: block                   # block | warn | off — cases passing in the published version
 ```
+
+Release gates are explained in [evaluation architecture](../architecture/evaluation-architecture.md). Publishing is
+refused unless the latest evaluation of the exact specification passed every gate and was compared with the
+currently published version.
 
 ## Workflow
 

@@ -62,8 +62,16 @@ Per-agent secrets for connectors are stored through the secret backend (`AF_SECR
 | `AF_MCP_CONFIG_FILE` | `null` |  |
 | `AF_DOCUMENT_DIRS` | `["~/Documents", "~/Downloads", "~/Desktop"]` | Folders the Interview Prep agent may read resumes, job descriptions and feedback from |
 | `AF_INTERVIEW_PREP_DIR` | `~/Documents/InterviewPrep` | Where the Interview Prep agent writes `resume.docx`, `resume.pdf` and `prep-guide.md` |
+| `AF_MAX_EXECUTION_ATTEMPTS` | `3` | Worker crashes tolerated per execution before it is dead-lettered for an operator |
+| `AF_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures that open a model-provider or network/MCP tool circuit |
+| `AF_CIRCUIT_RECOVERY_SECONDS` | `30.0` | How long a circuit stays open before one trial call |
+| `AF_MCP_ALLOWED_COMMANDS` | `[]` | Executables stdio MCP servers may run (empty: stdio servers refused) |
+| `AF_VAULT_ADDR` | `null` | HashiCorp Vault address for `AF_SECRETS_BACKEND=vault`; the token comes from `VAULT_TOKEN` |
+| `AF_VAULT_MOUNT` | `"secret"` | Vault KV v2 mount |
+| `AF_VAULT_PREFIX` | `"agent-factory"` | Path prefix inside the mount |
+| `AF_AUDIT_SINK_PATH` | `null` | Append-only JSONL copy of every audit event (point at WORM/immutable storage) |
 | `AF_CAPTURE_CONTENT` | `true` |  |
 | `AF_TELEMETRY_EXPORTER` | `"none"` |  |
 | `AF_OTLP_ENDPOINT` | `null` |  |
 | `AF_RETENTION_DAYS` | `30` |  |
-| `AF_SECRETS_BACKEND` | `"env"` |  |
+| `AF_SECRETS_BACKEND` | `"env"` | `env`, `keyring`, `file` or `vault` |
