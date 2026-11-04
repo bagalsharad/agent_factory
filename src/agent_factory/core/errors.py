@@ -42,6 +42,16 @@ class PermissionDeniedError(AgentFactoryError):
     code = "permission_denied"
 
 
+class ToolOutcomeUnknownError(AgentFactoryError):
+    """A side-effecting tool call was interrupted (e.g. worker crash); it may or may not have taken effect.
+
+    The execution stops instead of repeating the call; an operator confirms the outcome before it can continue.
+    """
+
+    status_code = 409
+    code = "in_doubt"
+
+
 class InvalidStateError(AgentFactoryError):
     """An operation is not allowed in the resource's current lifecycle state."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 import jsonschema
 from pydantic import ValidationError
 
+from ..core.circuit import CircuitRegistry
 from ..core.errors import NotFoundError, SandboxUnavailableError, ToolError
 from ..core.logging import get_logger
 from .base import Tool, ToolContext, ToolDefinition
@@ -30,6 +32,13 @@ class ToolRegistry:
         if tool.version in versions:
             raise ValueError(f"Tool {tool.name}@{tool.version} already registered")
         versions[tool.version] = tool
+
+    def unregister(self, name: str) -> None:
+        self._tools.pop(name, None)
+        self._disabled.discard(name)
+
+    def names(self) -> list[str]:
+        return sorted(self._tools)
 
     def disable(self, names: list[str]) -> None:
         self._disabled.update(names)
@@ -93,8 +102,9 @@ class ToolResult:
 class ToolExecutor:
     """Runs an *already authorized* tool call: input validation, timeout, output validation, normalization."""
 
-    def __init__(self, max_workers: int = 8) -> None:
+    def __init__(self, max_workers: int = 8, circuits: CircuitRegistry | None = None) -> None:
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="af-tool")
+        self.circuits = circuits or CircuitRegistry()
 
     def execute(self, tool: Tool, arguments: dict[str, Any], ctx: ToolContext, *, max_retries: int = 0) -> ToolResult:
         definition = tool.definition
@@ -113,15 +123,31 @@ class ToolExecutor:
             )
         attempts = 0
         retries_allowed = max_retries if definition.idempotent else 0
+        external = definition.network or definition.connector == "mcp"
+        breaker = self.circuits.get(f"tool:{definition.name}") if external else None
         while True:
             attempts += 1
+            if breaker is not None and not breaker.allow():
+                return ToolResult(
+                    ok=False,
+                    error={
+                        "code": "circuit_open",
+                        "message": f"'{definition.name}' is failing; calls are paused for {breaker.retry_after():.0f}s",
+                    },
+                    duration_ms=_ms(started),
+                    attempts=attempts,
+                )
             future = self._pool.submit(tool.run, args, ctx)
             try:
                 output = future.result(timeout=definition.timeout_seconds)
                 output = _validate_output(definition, output)
+                if breaker is not None:
+                    breaker.record_success()
                 return ToolResult(ok=True, output=output, duration_ms=_ms(started), attempts=attempts)
             except concurrent.futures.TimeoutError:
                 future.cancel()
+                if breaker is not None:
+                    breaker.record_failure()
                 return ToolResult(
                     ok=False,
                     error={"code": "timeout", "message": f"Tool exceeded {definition.timeout_seconds}s"},
@@ -137,8 +163,11 @@ class ToolExecutor:
                     attempts=attempts,
                 )
             except ToolError as exc:
+                if exc.retryable and breaker is not None:
+                    breaker.record_failure()
                 if exc.retryable and attempts <= retries_allowed:
                     log.info("retrying tool", extra={"tool": definition.name, "attempt": attempts})
+                    time.sleep(min(0.1 * 2 ** (attempts - 1), 2.0) * random.uniform(0.5, 1.0))  # noqa: S311
                     continue
                 details = exc.details if isinstance(exc.details, dict) else {}
                 return ToolResult(

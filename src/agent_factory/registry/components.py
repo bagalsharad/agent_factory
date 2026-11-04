@@ -55,10 +55,11 @@ class ComponentCreate(BaseModel):
     description: str = ""
     definition: dict[str, Any]
     metadata: dict[str, Any] = Field(default_factory=dict)
+    owner: str | None = Field(None, max_length=200, description="Team or person who answers for this component.")
 
 
 def _serialize(c: Component, in_use: int | None = None) -> dict[str, Any]:
-    out = {
+    out: dict[str, Any] = {
         "id": c.id,
         "kind": c.kind,
         "name": c.name,
@@ -67,6 +68,7 @@ def _serialize(c: Component, in_use: int | None = None) -> dict[str, Any]:
         "definition": c.definition,
         "metadata": c.metadata_,
         "status": c.status,
+        "owner": c.owner,
         "content_hash": c.content_hash,
         "ref": f"{c.kind}/{c.name}@{c.version}",
         "builtin": c.workspace_id is None,
@@ -114,6 +116,7 @@ class ComponentRegistry:
                 description=data.description,
                 definition=data.definition,
                 metadata_=data.metadata,
+                owner=data.owner,
                 content_hash=content_hash(data.definition),
             )
             session.add(record)

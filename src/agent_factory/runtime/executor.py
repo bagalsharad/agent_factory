@@ -11,6 +11,8 @@ policy hash it ran with (``config_snapshot``). Executions are dispatched through
 from __future__ import annotations
 
 import threading
+import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -30,7 +32,7 @@ from ..core.errors import (
     PermissionDeniedError,
     ValidationFailedError,
 )
-from ..core.ids import content_hash, utcnow
+from ..core.ids import content_hash, new_id, utcnow
 from ..core.logging import execution_id_var, get_logger
 from ..governance.approvals import ApprovalService
 from ..governance.audit import AuditLog
@@ -41,7 +43,7 @@ from ..harness.budget import BudgetTracker
 from ..harness.events import EventRecorder
 from ..harness.harness import ExecutionContext, GovernedHarness
 from ..memory.conversation import ConversationMemory
-from ..observability.telemetry import span
+from ..observability.telemetry import current_trace_id, span
 from ..registry.agents import AgentService
 from ..spec.loader import load_spec
 from ..spec.models import AgentSpec
@@ -49,6 +51,7 @@ from ..storage.checkpointer import SqlCheckpointSaver
 from ..storage.db import Database
 from ..storage.models import (
     Approval,
+    CheckpointRecord,
     Component,
     Execution,
     ExecutionEvent,
@@ -58,7 +61,8 @@ from .graph import compile_workflow
 
 log = get_logger(__name__)
 
-TERMINAL = {"completed", "failed", "cancelled", "budget_exceeded", "rejected"}
+TERMINAL = {"completed", "failed", "cancelled", "budget_exceeded", "rejected", "dead_lettered"}
+RECOVERABLE = {"failed", "dead_lettered"}
 ACTIVE = {"queued", "running", "waiting_approval"}
 OPTION_KEYS = {
     "session_id",
@@ -87,6 +91,7 @@ def execution_dict(e: Execution, *, include_io: bool = True) -> dict[str, Any]:
         "budget_usage": e.budget_usage,
         "attempt": e.attempt,
         "cancel_requested": e.cancel_requested,
+        "trace_id": e.trace_id,
         "error": e.error,
         "queued_at": e.queued_at.isoformat() if e.queued_at else None,
         "started_at": e.started_at.isoformat() if e.started_at else None,
@@ -127,6 +132,8 @@ class ExecutionService:
         self.policy = policy
         self.conversation = conversation
         self.checkpointer = SqlCheckpointSaver(db)
+        self.budget_guard: Callable[[str, str], None] | None = None  # workspace/agent cost budgets (operations)
+        self.deployment_resolver: Callable[[str, str, str, str], dict[str, Any]] | None = None
         self.wakeup: threading.Event = threading.Event()
         harness.delegate_runner = self._run_child
         approvals.on_decided = lambda execution_id, _approval_id: self.enqueue_resume(execution_id)
@@ -144,6 +151,7 @@ class ExecutionService:
         correlation_id: str | None = None,
         mode: str = "standard",
         inline: bool = False,
+        environment: str | None = None,
     ) -> dict[str, Any]:
         principal.require("executions:run")
         options = dict(options or {})
@@ -154,7 +162,19 @@ class ExecutionService:
             raise PermissionDeniedError("Test options (fault injection, model override) require agents:write")
         if mode != "evaluation":
             options.pop("auto_approval", None)  # simulated approvals exist only inside evaluation runs
+        deployment: dict[str, Any] | None = None
+        if environment is not None:  # the environment's deployment decides the version (canary by stable hash)
+            if version is not None:
+                raise ValidationFailedError("Pass either a version or an environment, not both")
+            if self.deployment_resolver is None:
+                raise ValidationFailedError("Deployments are not available")
+            deployment = self.deployment_resolver(
+                principal.workspace_id, agent_id, environment, idempotency_key or new_id()
+            )
+            version = deployment["version"]
         agent, version_record = self.agents.executable_version(principal, agent_id, version)
+        if mode != "evaluation" and self.budget_guard is not None:
+            self.budget_guard(principal.workspace_id, agent.id)  # refuses new work once a blocking budget is spent
         spec = load_spec(version_record.spec)
         try:
             jsonschema.validate(input_data, spec.spec.inputs)
@@ -163,6 +183,11 @@ class ExecutionService:
                 f"Input does not match the agent's input schema: {exc.message}",
                 details={"path": "/".join(map(str, exc.path)), "code": "input_invalid"},
             ) from exc
+        if deployment is not None and deployment["limits"]:
+            from ..registry.releases import ReleaseService
+
+            tightened = ReleaseService.tightened_limits(spec.spec.execution_limits, deployment["limits"])
+            options["limits_override"] = {**options.get("limits_override", {}), **tightened}
         request_hash = content_hash({"agent": agent_id, "version": version_record.id, "input": input_data})
         with self.db.transaction() as session:
             if idempotency_key:
@@ -192,7 +217,8 @@ class ExecutionService:
                 requested_by=self._user(principal),
                 correlation_id=correlation_id,
                 idempotency_key=idempotency_key,
-                config_snapshot=self._snapshot(spec, version_record),
+                config_snapshot=self._snapshot(spec, version_record)
+                | ({"deployment": deployment} if deployment else {}),
                 options={**options, "_request_hash": request_hash},
                 queued_at=utcnow(),
             )
@@ -422,6 +448,8 @@ class ExecutionService:
                     .where(Execution.id == execution.id)
                     .values(status="running", pending_action=None, started_at=execution.started_at or utcnow())
                 )
+            if action == "recover" and not self._has_checkpoint(execution.id):
+                action = "start"  # crashed before the first checkpoint: nothing ran to completion, start over
             if action == "start":
                 ctx.events.emit(
                     "execution.started",
@@ -441,9 +469,16 @@ class ExecutionService:
                 "agent.execution",
                 execution_id=execution.id,
                 agent=spec.metadata.name,
+                agent_id=execution.agent_id,
                 version=spec.metadata.version,
+                agent_version_id=execution.agent_version_id,
+                workspace_id=execution.workspace_id,
+                correlation_id=execution.correlation_id or "",
+                mode=execution.mode,
+                model=f"{spec.spec.model.provider}/{spec.spec.model.model}",
                 action=action,
             ):
+                self._record_trace_id(execution.id)
                 result = graph.invoke(payload, config)
             if result.get("__interrupt__"):
                 status = "waiting_approval"
@@ -620,8 +655,11 @@ class ExecutionService:
             execution = session.get(Execution, execution_id)
             if not execution or execution.workspace_id != principal.workspace_id:
                 raise NotFoundError("Execution not found")
-            if execution.status not in {"failed"}:
-                raise InvalidStateError("Only failed executions can be recovered")
+            if execution.status not in RECOVERABLE:
+                raise InvalidStateError("Only failed or dead-lettered executions can be recovered")
+            if execution.status == "dead_lettered":  # an operator decided to try again: fresh attempt budget
+                principal.require("executions:recover")
+                execution.attempt = 0
             execution.status, execution.pending_action, execution.queued_at = "queued", "recover", utcnow()
             execution.error, execution.finished_at = None, None
             session.flush()
@@ -647,18 +685,143 @@ class ExecutionService:
                     Execution.heartbeat_at < threshold,
                 )
             ).all()
+            ids, dead = [], []
             for execution in stale:
+                if execution.attempt >= self.settings.max_execution_attempts:
+                    execution.error = self._dead_letter_record(session, execution)
+                    execution.status, execution.finished_at, execution.worker_id = "dead_lettered", utcnow(), None
+                    dead.append(execution.id)
+                    continue
                 execution.status = "queued"
                 execution.pending_action = "recover" if execution.started_at else "start"
                 execution.queued_at = utcnow()
-            ids = [e.id for e in stale]
+                ids.append(execution.id)
         for eid in ids:
             EventRecorder(self.db, eid, capture_content=False).emit(
                 "execution.requeued", status="queued", reason="worker heartbeat lost"
             )
+        for eid in dead:
+            EventRecorder(self.db, eid, capture_content=False).emit(
+                "execution.dead_lettered", status="dead_lettered", reason="worker heartbeat lost too many times"
+            )
+            self.audit.record("execution.dead_lettered", "execution", eid, outcome="failure")
         if ids:
             self.wakeup.set()
         return len(ids)
+
+    def _record_trace_id(self, execution_id: str) -> None:
+        """The OpenTelemetry trace id of the first run; a W3C-format id when no tracer is configured, so every
+        execution can still be correlated across logs, events and audit records. Resumes keep the first id."""
+        trace_id = current_trace_id() or uuid.uuid4().hex
+        with self.db.transaction() as session:
+            session.execute(
+                update(Execution)
+                .where(Execution.id == execution_id, Execution.trace_id.is_(None))
+                .values(trace_id=trace_id)
+            )
+
+    def _has_checkpoint(self, execution_id: str) -> bool:
+        with self.db.session() as session:
+            return (
+                session.scalars(
+                    select(CheckpointRecord.id).where(CheckpointRecord.thread_id == execution_id).limit(1)
+                ).first()
+                is not None
+            )
+
+    def _dead_letter_record(self, session: Any, execution: Execution) -> dict[str, Any]:
+        """Everything an operator needs to decide: why, how far it got, and what was retried."""
+        last = session.execute(
+            select(CheckpointRecord.checkpoint_id, CheckpointRecord.created_at)
+            .where(CheckpointRecord.thread_id == execution.id)
+            .order_by(CheckpointRecord.id.desc())
+            .limit(1)
+        ).first()
+        history = [
+            {"at": ev.created_at.isoformat(), "type": ev.type, "reason": (ev.payload or {}).get("reason")}
+            for ev in session.scalars(
+                select(ExecutionEvent)
+                .where(
+                    ExecutionEvent.execution_id == execution.id,
+                    ExecutionEvent.type.in_(["execution.requeued", "execution.recovering"]),
+                )
+                .order_by(ExecutionEvent.id)
+            )
+        ]
+        in_doubt = session.scalars(
+            select(ToolInvocation.id).where(
+                ToolInvocation.execution_id == execution.id, ToolInvocation.status.in_(["pending", "in_doubt"])
+            )
+        ).all()
+        return {
+            "code": "dead_lettered",
+            "message": f"The worker running this execution stopped {execution.attempt} time(s); it needs an operator. "
+            "Inspect it, resolve any in-doubt tool calls, then recover or cancel it.",
+            "details": {
+                "attempts": execution.attempt,
+                "last_worker": execution.worker_id,
+                "last_heartbeat": execution.heartbeat_at.isoformat() if execution.heartbeat_at else None,
+                "last_checkpoint": {"id": last[0], "at": last[1].isoformat()} if last else None,
+                "retry_history": history,
+                "in_doubt_tool_calls": list(in_doubt),
+                "recovery_options": ["POST /api/v1/executions/{id}/retry", "POST /api/v1/executions/{id}/cancel"],
+            },
+        }
+
+    def resolve_in_doubt(
+        self,
+        principal: Principal,
+        execution_id: str,
+        invocation_id: str,
+        *,
+        performed: bool,
+        note: str = "",
+        resume: bool = True,
+    ) -> dict[str, Any]:
+        """An operator states whether an interrupted side-effecting call actually happened.
+
+        performed=True records it as completed (it is never repeated); performed=False allows it to run again.
+        """
+        principal.require("executions:recover")
+        with self.db.transaction() as session:
+            execution = session.get(Execution, execution_id)
+            invocation = session.get(ToolInvocation, invocation_id)
+            if (
+                not execution
+                or execution.workspace_id != principal.workspace_id
+                or not invocation
+                or invocation.execution_id != execution_id
+            ):
+                raise NotFoundError("Tool invocation not found")
+            if invocation.status not in {"in_doubt", "pending"} or execution.status not in TERMINAL:
+                raise InvalidStateError("Only in-doubt tool calls of a stopped execution can be resolved")
+            resolution = {
+                "by": principal.user_id,
+                "at": utcnow().isoformat(),
+                "performed": performed,
+                "note": note[:2000],
+            }
+            if performed:
+                invocation.status = "completed"
+                invocation.result = {"ok": True, "output": {"resolved_by_operator": True, "note": note[:2000]}}
+            else:
+                invocation.status, invocation.result = "reset", None
+            invocation.decision = {**(invocation.decision or {}), "in_doubt_resolution": resolution}
+            status = execution.status
+        EventRecorder(self.db, execution_id, capture_content=False).emit(
+            "tool.in_doubt_resolved", status="resolved", invocation_id=invocation_id, performed=performed
+        )
+        self.audit.record(
+            "tool.in_doubt_resolved",
+            "tool_invocation",
+            invocation_id,
+            actor_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+            details={"execution_id": execution_id, "performed": performed},
+        )
+        if resume and status in RECOVERABLE:
+            return self.retry(principal, execution_id)
+        return self.get(principal, execution_id)
 
     # ================================================================== queries
     def get(self, principal: Principal, execution_id: str) -> dict[str, Any]:

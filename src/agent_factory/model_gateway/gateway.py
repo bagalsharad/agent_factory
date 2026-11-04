@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
+from ..core.circuit import CircuitRegistry
 from ..core.config import Settings
 from ..core.errors import ProviderError, ProviderUnavailableError
 from ..core.logging import get_logger
@@ -41,8 +42,16 @@ class ProviderEntry:
 
 
 class ModelGateway:
-    def __init__(self, settings: Settings, extra: dict[str, ModelProvider] | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        extra: dict[str, ModelProvider] | None = None,
+        circuits: CircuitRegistry | None = None,
+    ) -> None:
         self.settings = settings
+        self.circuits = circuits or CircuitRegistry(
+            failure_threshold=settings.circuit_failure_threshold, recovery_seconds=settings.circuit_recovery_seconds
+        )
         self._entries: dict[str, ProviderEntry] = {}
         self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="af-model")
         self._register_defaults()
@@ -169,18 +178,30 @@ class ModelGateway:
         """Call a provider with timeout enforcement and bounded exponential-backoff retries."""
         adapter = self.provider(provider)
         retries = self.settings.model_max_retries if max_retries is None else max_retries
+        breaker = self.circuits.get(f"model:{provider}")
         attempt = 0
         while True:
             attempt += 1
+            if not breaker.allow():
+                raise ProviderError(
+                    f"Provider '{provider}' is failing; calls are paused for {breaker.retry_after():.0f}s "
+                    "(circuit open)",
+                    details={"code": "circuit_open", "provider": provider},
+                )
             future = self._pool.submit(adapter.chat, request)
             try:
-                return future.result(timeout=request.timeout_seconds + 5)
+                response = future.result(timeout=request.timeout_seconds + 5)
+                breaker.record_success()
+                return response
             except concurrent.futures.TimeoutError as exc:
                 future.cancel()
+                breaker.record_failure()
                 raise ProviderError(
                     f"Model call exceeded {request.timeout_seconds}s", details={"code": "timeout"}
                 ) from exc
             except ProviderError as exc:
+                if exc.retryable:  # outages and overload count; bad requests say nothing about provider health
+                    breaker.record_failure()
                 if not exc.retryable or attempt > retries:
                     raise
                 delay = min(0.25 * 2 ** (attempt - 1), 4.0) + random.uniform(0, 0.1)  # noqa: S311

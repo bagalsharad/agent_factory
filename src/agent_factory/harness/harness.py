@@ -39,6 +39,7 @@ from ..core.errors import (
     ExecutionCancelledError,
     NotFoundError,
     ProviderError,
+    ToolOutcomeUnknownError,
 )
 from ..core.logging import get_logger
 from ..core.redaction import redact
@@ -53,7 +54,7 @@ from ..observability.telemetry import span
 from ..spec.models import AgentSpec, ModelSpec, WorkflowStep
 from ..storage.db import Database
 from ..storage.models import ToolInvocation
-from ..tools.base import ToolContext
+from ..tools.base import Tool, ToolContext
 from ..tools.registry import ToolExecutor, ToolRegistry
 from ..tools.sandbox import build_sandbox
 from .budget import BudgetTracker
@@ -66,6 +67,7 @@ log = get_logger(__name__)
 DELEGATE_PREFIX = "delegate_to_"
 # Failed invocations are not terminal: recovery re-attempts them (completed/denied/rejected are final).
 TERMINAL_INVOCATION = {"completed", "denied", "rejected"}
+IN_DOUBT = {"pending", "in_doubt"}  # started but never finished: the side effect may or may not have happened
 
 
 class StepFailedError(AgentFactoryError):
@@ -164,13 +166,13 @@ class Harness(ABC):
                 ctx.events.emit("step.paused", node_id=node_id, status="waiting_approval")
                 ctx.persist_usage(ctx.budget.snapshot())
                 raise
-            except (BudgetExceededError, ExecutionCancelledError):
+            except (BudgetExceededError, ExecutionCancelledError, ToolOutcomeUnknownError) as exc:
                 ctx.events.emit(
                     "step.failed",
                     node_id=node_id,
                     status="failed",
                     duration_ms=round((time.perf_counter() - started) * 1000, 2),
-                    error="terminated",
+                    error="in_doubt" if isinstance(exc, ToolOutcomeUnknownError) else "terminated",
                 )
                 ctx.persist_usage(ctx.budget.snapshot())
                 raise
@@ -272,9 +274,9 @@ class GovernedHarness(Harness):
         sandbox_ok = build_sandbox(self.settings).available()[0]
         hosts = self.policy.allowed_hosts(ctx.spec.spec)
         for name in names:
-            if not self.tools.has(name):
+            tool = self._resolve_tool(ctx, name)
+            if tool is None:
                 continue
-            tool = self.tools.get(name)
             definition = tool.definition
             probe_args = {"url": f"https://{hosts[0].lstrip('*.')}/"} if (definition.network and hosts) else {}
             decision = self.policy.evaluate_tool(
@@ -362,7 +364,8 @@ class GovernedHarness(Harness):
 
         with span("model.call", provider=model.provider, model=model.model, execution_id=ctx.execution_id) as sp:
             try:
-                response = self.gateway.chat(model.provider, request, max_retries=limits.max_retries, on_retry=on_retry)
+                retries = model.max_retries if model.max_retries is not None else limits.max_retries
+                response = self.gateway.chat(model.provider, request, max_retries=retries, on_retry=on_retry)
             except ProviderError as exc:
                 ctx.events.emit(
                     "model.error",
@@ -841,6 +844,45 @@ class GovernedHarness(Harness):
         return {"final": final}
 
     # ================================================================== tool invocation
+    def _resolve_tool(self, ctx: ExecutionContext, name: str) -> Tool | None:
+        """The tool version the spec pins (never silently replaced), else the registered latest."""
+        ref = next((t for t in ctx.spec.spec.tools if t.name == name), None)
+        version = ref.version if ref is not None else None
+        return self.tools.get(name, version) if self.tools.has(name, version) else None
+
+    @staticmethod
+    def _tool_retries(ctx: ExecutionContext, tool_name: str) -> int:
+        ref = next((t for t in ctx.spec.spec.tools if t.name == tool_name), None)
+        limits = ctx.spec.spec.execution_limits
+        return ref.max_retries if ref is not None and ref.max_retries is not None else limits.max_retries
+
+    def _mark_in_doubt(
+        self, ctx: ExecutionContext, key: str, step_id: str, tool_name: str, existing: ToolInvocation
+    ) -> None:
+        message = (
+            f"A previous attempt of '{tool_name}' was interrupted and may already have taken effect. It is not "
+            "repeated automatically: an operator must confirm whether it happened before the execution continues."
+        )
+        if existing.status != "in_doubt":
+            self._save_invocation(
+                key, status="in_doubt", result={"ok": False, "error": {"code": "in_doubt", "message": message}}
+            )
+            ctx.events.emit(
+                "tool.in_doubt", node_id=step_id, status="in_doubt", tool=tool_name, invocation_id=existing.id
+            )
+            from ..governance.audit import AuditLog
+
+            AuditLog(self.db).record(
+                "tool.in_doubt",
+                "tool_invocation",
+                existing.id,
+                outcome="failure",
+                actor_id=ctx.requested_by,
+                workspace_id=ctx.workspace_id,
+                details={"execution_id": ctx.execution_id, "tool": tool_name, "step_id": step_id},
+            )
+        raise ToolOutcomeUnknownError(message, details={"invocation_id": existing.id, "tool": tool_name})
+
     def _invocation(self, key: str) -> ToolInvocation | None:
         with self.db.session() as session:
             row = session.scalars(select(ToolInvocation).where(ToolInvocation.idempotency_key == key)).first()
@@ -973,8 +1015,10 @@ class GovernedHarness(Harness):
             ctx.events.emit("tool.replayed", node_id=step_id, tool=tool_name, status=existing.status)
             return existing.result or {"ok": False, "error": {"code": existing.status, "message": "Not performed"}}
 
-        tool = self.tools.get(tool_name) if self.tools.has(tool_name) else None
+        tool = self._resolve_tool(ctx, tool_name)
         definition = tool.definition if tool else None
+        if existing and existing.status in IN_DOUBT and not (definition and definition.idempotent):
+            self._mark_in_doubt(ctx, key, step_id, tool_name, existing)
         safe_args = redact(arguments)
         base = {
             "execution_id": ctx.execution_id,
@@ -1090,8 +1134,9 @@ class GovernedHarness(Harness):
 
         assert tool is not None
         assert definition is not None
-        if not existing:
-            self._save_invocation(key, **base, status="pending", decision=decision.to_dict())
+        # Recorded before the call so a crash mid-call leaves "pending": recovery then never repeats a
+        # non-idempotent call (see IN_DOUBT), whether or not it had been approved.
+        self._save_invocation(key, **base, status="pending", decision=decision.to_dict())
         tool_ctx = ToolContext(
             workspace_id=ctx.workspace_id,
             execution_id=ctx.execution_id,
@@ -1106,9 +1151,7 @@ class GovernedHarness(Harness):
             fault_injection=ctx.options.setdefault("fault_injection", {}) or {},
         )
         with span("tool.call", tool=tool_name, execution_id=ctx.execution_id):
-            outcome = self.executor.execute(
-                tool, arguments, tool_ctx, max_retries=ctx.spec.spec.execution_limits.max_retries
-            )
+            outcome = self.executor.execute(tool, arguments, tool_ctx, max_retries=self._tool_retries(ctx, tool_name))
         for _ in range(outcome.attempts - 1):
             ctx.budget.record_retry()
         ctx.budget.record_tool_call()

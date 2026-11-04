@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..core import semver
 from ..core.errors import ConflictError, InvalidStateError, NotFoundError, ValidationFailedError
 from ..core.ids import content_hash, utcnow
+from ..evaluation.gates import publish_blockers
 from ..governance.audit import AuditLog
 from ..governance.rbac import Principal
 from ..spec.loader import dump_yaml, load_spec
@@ -23,6 +24,8 @@ from .lifecycle import assert_transition, is_mutable
 
 if TYPE_CHECKING:
     from ..builder.builder import AgentBuilder
+    from .dependencies import DependencyService
+    from .releases import ReleaseService
 
 S = LifecycleStatus
 
@@ -58,6 +61,8 @@ class AgentService:
         self.audit = audit
         self.validator = validator
         self.builder: AgentBuilder | None = None  # set by the platform container (avoids an import cycle)
+        self.dependencies: DependencyService | None = None  # set by the platform
+        self.releases: ReleaseService | None = None  # set by the platform (artifacts on publish)
 
     # ------------------------------------------------------------------ lookups
     def _agent(self, session: Session, principal: Principal, agent_id: str) -> Agent:
@@ -94,6 +99,11 @@ class AgentService:
             "description": agent.description,
             "workspace_id": agent.workspace_id,
             "owner_id": agent.owner_id,
+            "ownership": {
+                "business_owner": agent.business_owner,
+                "technical_contact": agent.technical_contact,
+                "escalation_contact": agent.escalation_contact,
+            },
             "created_at": agent.created_at.isoformat(),
             "updated_at": agent.updated_at.isoformat(),
             "latest_version": version_dict(latest, include_spec=False) if latest else None,
@@ -410,6 +420,8 @@ class AgentService:
             built.validation_report = report.get("validation")
             built.status = S.TESTING if report["success"] else S.FAILED
             status = built.status
+        if report["success"] and self.dependencies is not None:
+            self.dependencies.record(version_id)
         self.audit.record(
             "agent.build",
             "agent_version",
@@ -431,13 +443,15 @@ class AgentService:
                 v.status = S.TESTING
             return v.status
 
-    def _passing_evaluation(self, session: Session, v: AgentVersion) -> EvaluationRun | None:
+    def latest_evaluation(self, session: Session, v: AgentVersion) -> EvaluationRun | None:
+        """The latest completed evaluation run for this exact specification (what the publish gate judges)."""
         return session.scalars(
             select(EvaluationRun)
             .where(
                 EvaluationRun.agent_version_id == v.id,
                 EvaluationRun.status == "completed",
                 EvaluationRun.spec_hash == v.spec_hash,
+                EvaluationRun.purpose == "release",
             )
             .order_by(EvaluationRun.created_at.desc())
             .limit(1)
@@ -450,17 +464,19 @@ class AgentService:
         with self.db.transaction() as session:
             agent = self._agent(session, principal, agent_id)
             v = self._version(session, agent, version)
-            if v.status != S.APPROVED:
+            run = self.latest_evaluation(session, v)
+            blockers = publish_blockers(
+                version_status=v.status,
+                run={"passed": run.passed, "summary": run.summary} if run else None,
+                active_version_id=agent.active_version_id,
+                version_id=v.id,
+            ) + (self.dependencies.blockers(v.id) if self.dependencies is not None else [])
+            if blockers:
                 raise InvalidStateError(
-                    f"Only approved versions can be published (version {v.version} is "
-                    f"'{v.status}'). Run the evaluation suite until its acceptance criteria pass."
+                    f"Publish gate: version {v.version} cannot be published. " + " ".join(blockers),
+                    details={"blockers": blockers},
                 )
-            run = self._passing_evaluation(session, v)
-            if not run or not run.passed:
-                raise InvalidStateError(
-                    "Publish gate: the latest evaluation run for this exact specification did not "
-                    "pass its acceptance criteria"
-                )
+            assert run is not None
             previous = session.get(AgentVersion, agent.active_version_id) if agent.active_version_id else None
             if previous and previous.id != v.id and previous.status == S.PUBLISHED:
                 previous.status = S.DEPRECATED
@@ -473,6 +489,8 @@ class AgentService:
             agent.updated_at = utcnow()
             session.flush()
             result = version_dict(v)
+        if self.releases is not None:  # immutable release artifact for deployments
+            self.releases.on_publish(result["id"], principal)
         self.audit.record(
             "agent.publish",
             "agent_version",
@@ -480,6 +498,29 @@ class AgentService:
             actor_id=principal.user_id,
             workspace_id=principal.workspace_id,
             details={"version": result["version"]},
+        )
+        return result
+
+    def set_ownership(self, principal: Principal, agent_id: str, contacts: dict[str, str | None]) -> dict[str, Any]:
+        principal.require("agents:write")
+        allowed = {"business_owner", "technical_contact", "escalation_contact"}
+        unknown = set(contacts) - allowed
+        if unknown:
+            raise ValidationFailedError(f"Unknown ownership fields: {', '.join(sorted(unknown))}")
+        with self.db.transaction() as session:
+            agent = self._agent(session, principal, agent_id)
+            for key, value in contacts.items():
+                setattr(agent, key, (value or "").strip()[:200] or None)
+            agent.updated_at = utcnow()
+            session.flush()
+            result = self.agent_summary(session, agent)
+        self.audit.record(
+            "agent.ownership",
+            "agent",
+            agent_id,
+            actor_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+            details={k: bool(v) for k, v in contacts.items()},
         )
         return result
 

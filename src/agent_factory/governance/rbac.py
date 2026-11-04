@@ -36,6 +36,7 @@ ROLE_PERMISSIONS: dict[Role, set[str]] = {
     | {
         "executions:run",
         "executions:cancel",
+        "executions:recover",
         "approvals:decide",
         "tools:invoke",
         "tools:invoke:write",

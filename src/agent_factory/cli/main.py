@@ -865,3 +865,34 @@ def media_status() -> None:
         console.print(f"[yellow]![/yellow] {problem}")
     if not problems:
         console.print("[green]✓[/green] local transcription ready")
+
+
+audit_app = typer.Typer(help="Audit trail export and offline verification.", no_args_is_help=True)
+app.add_typer(audit_app, name="audit")
+
+
+@audit_app.command("export")
+def audit_export(output: Annotated[Path, typer.Option("--output", "-o")], after_seq: int = 0) -> None:
+    """Write the audit chain (with hashes) as JSON Lines."""
+    from ..core.ids import canonical_json
+
+    platform = _platform()
+    count = 0
+    with output.open("w", encoding="utf-8") as handle:
+        for record in platform.audit.export(after_seq=after_seq):
+            handle.write(canonical_json(record) + "\n")
+            count += 1
+    platform.audit.record("audit.export", "audit", None, details={"events": count, "via": "cli"})
+    platform.stop()
+    console.print(f"exported {count} event(s) to {output}")
+
+
+@audit_app.command("verify-export")
+def audit_verify_export(path: Path) -> None:
+    """Verify an exported or external-sink audit file without the database (exit 1 if the chain is broken)."""
+    from ..governance.audit import verify_records
+
+    with path.open(encoding="utf-8") as handle:
+        result = verify_records(json.loads(line) for line in handle if line.strip())
+    console.print_json(data=result)
+    raise typer.Exit(0 if result["valid"] else 1)

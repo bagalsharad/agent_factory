@@ -23,6 +23,9 @@ class ExecutionCreate(BaseModel):
     version: str | None = None
     input: dict[str, Any] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
+    environment: str | None = Field(
+        None, description="Run the version deployed to this environment (development, test, staging, production)"
+    )
 
 
 @router.post(
@@ -46,6 +49,7 @@ def create_execution(
         options=payload.options,
         idempotency_key=idempotency_key,
         correlation_id=correlation_id_var.get(),
+        environment=payload.environment,
     )
     if result.get("idempotent_replay"):
         response.status_code = 200
@@ -124,6 +128,24 @@ def cancel(execution_id: str, platform: PlatformDep, principal: PrincipalDep) ->
 @router.post("/{execution_id}/retry", summary="Recover a failed execution from its last checkpoint")
 def retry(execution_id: str, platform: PlatformDep, principal: PrincipalDep) -> dict[str, Any]:
     return platform.executions.retry(principal, execution_id)
+
+
+class InDoubtResolution(BaseModel):
+    performed: bool = Field(description="True if the side effect happened (never repeated); false to allow a retry.")
+    note: str = Field("", max_length=2000)
+    resume: bool = Field(True, description="Recover the execution from its last checkpoint afterwards.")
+
+
+@router.post(
+    "/{execution_id}/tool-invocations/{invocation_id}/resolve",
+    summary="Operator decision on an interrupted side-effecting tool call (in doubt after a crash)",
+)
+def resolve_in_doubt(
+    execution_id: str, invocation_id: str, payload: InDoubtResolution, platform: PlatformDep, principal: PrincipalDep
+) -> dict[str, Any]:
+    return platform.executions.resolve_in_doubt(
+        principal, execution_id, invocation_id, performed=payload.performed, note=payload.note, resume=payload.resume
+    )
 
 
 @router.delete("/{execution_id}", status_code=204)

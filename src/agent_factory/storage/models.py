@@ -94,6 +94,10 @@ class Agent(TimestampMixin, Base):
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     active_version_id: Mapped[str | None] = mapped_column(String(36), default=None)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Operational ownership (not part of the immutable spec): who answers for this agent in production.
+    business_owner: Mapped[str | None] = mapped_column(String(200), default=None)
+    technical_contact: Mapped[str | None] = mapped_column(String(200), default=None)
+    escalation_contact: Mapped[str | None] = mapped_column(String(200), default=None)
 
 
 class AgentVersion(TimestampMixin, Base):
@@ -147,6 +151,7 @@ class Component(TimestampMixin, Base):
     metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", default=dict)
     status: Mapped[str] = mapped_column(String(20), default="active")  # active | deprecated
     content_hash: Mapped[str] = mapped_column(String(64))
+    owner: Mapped[str | None] = mapped_column(String(200), default=None)
 
 
 class AgentVersionComponent(Base):
@@ -157,6 +162,129 @@ class AgentVersionComponent(Base):
     id: Mapped[str] = _id_col()
     agent_version_id: Mapped[str] = mapped_column(ForeignKey("agent_versions.id", ondelete="CASCADE"), index=True)
     component_id: Mapped[str] = mapped_column(ForeignKey("components.id"), index=True)
+
+
+class SloDefinition(TimestampMixin, Base):
+    """A service-level objective for one agent (or the whole workspace when agent_id is null)."""
+
+    __tablename__ = "slo_definitions"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = _id_col()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), default=None)
+    name: Mapped[str] = mapped_column(String(120))
+    metric: Mapped[str] = mapped_column(String(40))  # success_rate | error_rate | p95_latency_ms | evaluation_pass_rate
+    objective: Mapped[float] = mapped_column(Float)
+    window_hours: Mapped[int] = mapped_column(Integer, default=168)
+    created_by: Mapped[str | None] = mapped_column(String(36), default=None)
+
+
+class CostBudget(TimestampMixin, Base):
+    """Spending limit per workspace (agent_id null) or per agent, per UTC day or month."""
+
+    __tablename__ = "cost_budgets"
+    id: Mapped[str] = _id_col()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    agent_id: Mapped[str | None] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), default=None)
+    period: Mapped[str] = mapped_column(String(10), default="month")  # day | month
+    max_cost_usd: Mapped[float | None] = mapped_column(Float, default=None)
+    max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+    warn_at: Mapped[float] = mapped_column(Float, default=0.8)
+    action: Mapped[str] = mapped_column(String(10), default="block")  # block | warn
+
+
+class MCPServer(TimestampMixin, Base):
+    """A registered MCP server. Platform-wide (administrators only); tools are exposed only when trusted."""
+
+    __tablename__ = "mcp_servers"
+    id: Mapped[str] = _id_col()
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    transport: Mapped[str] = mapped_column(String(10))  # stdio | http
+    command: Mapped[list[Any]] = mapped_column(default=list)  # stdio argv
+    url: Mapped[str | None] = mapped_column(String(500), default=None)
+    auth_secret: Mapped[str | None] = mapped_column(String(120), default=None)  # bearer token secret name
+    env_secrets: Mapped[dict[str, Any]] = mapped_column(default=dict)  # ENV_VAR -> secret name (stdio)
+    trusted: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=30.0)
+    max_output_chars: Mapped[int] = mapped_column(Integer, default=20_000)
+    tool_allowlist: Mapped[list[Any]] = mapped_column(default=list)
+    tool_settings: Mapped[dict[str, Any]] = mapped_column(default=dict)  # tool -> {risk, side_effects}
+    discovered: Mapped[list[Any]] = mapped_column(default=list)
+    health: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    created_by: Mapped[str | None] = mapped_column(String(36), default=None)
+
+
+class AgentArtifact(Base):
+    """Immutable release artifact of a published version: spec, resolved dependencies, evaluation evidence."""
+
+    __tablename__ = "agent_artifacts"
+    id: Mapped[str] = _id_col()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
+    agent_version_id: Mapped[str] = mapped_column(ForeignKey("agent_versions.id", ondelete="CASCADE"), unique=True)
+    version: Mapped[str] = mapped_column(String(40))
+    artifact: Mapped[dict[str, Any]] = mapped_column()
+    artifact_hash: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DeploymentEnvironment(TimestampMixin, Base):
+    __tablename__ = "deployment_environments"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
+    id: Mapped[str] = _id_col()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    name: Mapped[str] = mapped_column(String(40))
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    promote_from: Mapped[str | None] = mapped_column(String(40), default=None)
+    config: Mapped[dict[str, Any]] = mapped_column(default=dict)  # {"limits": {...}} — tightening only
+
+
+class Deployment(TimestampMixin, Base):
+    """One version of an agent in one environment. Every transition is a row update plus an audit event."""
+
+    __tablename__ = "deployments"
+    __table_args__ = (Index("ix_deployments_env_agent", "environment_id", "agent_id", "status"),)
+    id: Mapped[str] = _id_col()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    environment_id: Mapped[str] = mapped_column(ForeignKey("deployment_environments.id"))
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
+    agent_version_id: Mapped[str] = mapped_column(ForeignKey("agent_versions.id"))
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("agent_artifacts.id"))
+    artifact_hash: Mapped[str] = mapped_column(String(64))
+    strategy: Mapped[str] = mapped_column(String(10), default="standard")  # standard | canary
+    traffic_percent: Mapped[int] = mapped_column(Integer, default=100)
+    # pending_approval | active | superseded | rolled_back | rejected | retired
+    status: Mapped[str] = mapped_column(String(20), default="pending_approval")
+    requested_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    approved_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    previous_deployment_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    activated_at: Mapped[datetime | None] = mapped_column(default=None)
+    ended_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class DependencyEdge(Base):
+    """What a built agent version depends on, resolved at build time (tool and component versions included).
+
+    Kinds: tool, model, model_profile, component, agent (specialist), evaluation_suite.
+    """
+
+    __tablename__ = "dependency_edges"
+    __table_args__ = (
+        UniqueConstraint("agent_version_id", "kind", "name"),
+        Index("ix_dependency_edges_target", "workspace_id", "kind", "name"),
+    )
+    id: Mapped[str] = _id_col()
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"))
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
+    agent_version_id: Mapped[str] = mapped_column(ForeignKey("agent_versions.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(200))
+    version: Mapped[str | None] = mapped_column(String(40), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class ToolDefinitionRecord(TimestampMixin, Base):
@@ -230,6 +358,7 @@ class Execution(TimestampMixin, Base):
     queued_at: Mapped[datetime | None] = mapped_column(default=None)
     started_at: Mapped[datetime | None] = mapped_column(default=None)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    trace_id: Mapped[str | None] = mapped_column(String(32), default=None, index=True)
 
 
 class ExecutionEvent(Base):
@@ -366,6 +495,11 @@ class EvaluationRun(TimestampMixin, Base):
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     started_at: Mapped[datetime | None] = mapped_column(default=None)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    # What exactly was evaluated (tool/component/prompt versions, environment) and what it was compared with.
+    provenance: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    baseline_run_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    # "release" runs gate publishing; "comparison" runs (another model config) never change lifecycle status.
+    purpose: Mapped[str] = mapped_column(String(20), default="release", server_default="release")
 
 
 class EvaluationResult(Base):
@@ -414,6 +548,7 @@ class SecretRef(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     backend: Mapped[str] = mapped_column(String(20))
     last_rotated_at: Mapped[datetime | None] = mapped_column(default=None)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class ConfigMetadata(Base):

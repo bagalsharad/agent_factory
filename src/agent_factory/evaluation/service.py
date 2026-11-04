@@ -7,24 +7,31 @@ records a verdict; they only block acceptance when listed in ``acceptance.requir
 
 from __future__ import annotations
 
+import platform as host_platform
 import statistics
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import select
 
-from ..core.errors import NotFoundError, ValidationFailedError
+from .. import __version__
+from ..core.config import Settings
+from ..core.errors import NotFoundError, PermissionDeniedError, ValidationFailedError
 from ..core.ids import content_hash, utcnow
 from ..core.logging import get_logger
 from ..governance.audit import AuditLog
 from ..governance.rbac import Principal
+from ..model_gateway.gateway import ModelGateway
 from ..registry.agents import AgentService
 from ..runtime.executor import ExecutionService
 from ..spec.loader import load_spec
-from ..spec.models import Acceptance, AgentSpec, EvalCaseSpec
+from ..spec.models import Acceptance, AgentSpec, EvalCaseSpec, ModelSpec
 from ..storage.db import Database
 from ..storage.models import (
+    Agent,
+    AgentVersion,
     Component,
     EvaluationCase,
     EvaluationResult,
@@ -34,7 +41,11 @@ from ..storage.models import (
     ExecutionEvent,
     ToolInvocation,
 )
+from ..tools.base import ToolDefinition
 from .checks import groundedness, run_checks
+from .gates import evaluate_gates, publish_blockers
+from .judge import judge_output
+from .security_suite import security_cases
 
 log = get_logger(__name__)
 
@@ -78,6 +89,9 @@ def run_dict(r: EvaluationRun, results: list[EvaluationResult] | None = None) ->
         "model_config": r.model_config_snapshot,
         "suite_hash": r.suite_hash,
         "spec_hash": r.spec_hash,
+        "provenance": r.provenance or {},
+        "baseline_run_id": r.baseline_run_id,
+        "purpose": r.purpose,
         "created_by": r.created_by,
         "created_at": r.created_at.isoformat(),
         "started_at": r.started_at.isoformat() if r.started_at else None,
@@ -100,11 +114,26 @@ def run_dict(r: EvaluationRun, results: list[EvaluationResult] | None = None) ->
 
 
 class EvaluationService:
-    def __init__(self, db: Database, agents: AgentService, executions: ExecutionService, audit: AuditLog) -> None:
+    def __init__(
+        self,
+        db: Database,
+        agents: AgentService,
+        executions: ExecutionService,
+        audit: AuditLog,
+        *,
+        settings: Settings | None = None,
+        tool_versions: Callable[[list[str]], dict[str, str]] | None = None,
+        tool_catalog: Callable[[], dict[str, ToolDefinition]] | None = None,
+        gateway: ModelGateway | None = None,
+    ) -> None:
         self.db = db
         self.agents = agents
         self.executions = executions
         self.audit = audit
+        self.settings = settings
+        self.tool_versions = tool_versions or (lambda names: {})
+        self.tool_catalog = tool_catalog or dict
+        self.gateway = gateway
 
     # ================================================================== suites
     def _upsert_suite(
@@ -228,6 +257,8 @@ class EvaluationService:
                     ).first()
                     if comp:
                         cases += [EvalCaseSpec.model_validate(c) for c in comp.definition.get("cases", [])]
+        if spec.spec.evaluation.security_suite:
+            cases += security_cases(spec, self.tool_catalog())
         if not cases:
             raise ValidationFailedError("This agent version has no evaluation cases or suite")
         suite = self._upsert_suite(
@@ -249,24 +280,43 @@ class EvaluationService:
         version: str | None = None,
         suite_id: str | None = None,
         wait: bool = False,
+        model_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Run a suite. With ``model_override`` it is a comparison run: every case (except ones that pin their
+        own model) uses that model, and the run never gates publishing or changes the version's status."""
         principal.require("evaluations:run")
         _agent, version_record = self.agents.executable_version(principal, agent_id, version, prefer_latest=True)
         spec = load_spec(version_record.spec)
+        override = ModelSpec.model_validate(model_override) if model_override else None
+        if override is not None and self.gateway is not None:
+            self.gateway.provider(override.provider)  # raises if the provider is unknown or disabled
         sid = self._suite_for_version(principal, agent_id, spec, suite_id)
         with self.db.transaction() as session:
             suite = session.get(EvaluationSuite, sid)
             assert suite is not None
+            baseline = None if override else self._baseline_run(session, agent_id, version_record.id)
+            provenance = self._provenance(spec, suite, version_record.version)
+            if override is not None:
+                provenance["model"] = {
+                    "provider": override.provider,
+                    "model": override.model,
+                    "profile": override.profile,
+                }
+                provenance["deterministic_mock_model"] = override.provider == "mock"
+                provenance["model_override"] = True
             run = EvaluationRun(
                 workspace_id=principal.workspace_id,
                 suite_id=sid,
                 agent_version_id=version_record.id,
                 status="running",
-                model_config_snapshot=spec.spec.model.model_dump(),
+                model_config_snapshot=(override or spec.spec.model).model_dump(),
+                purpose="comparison" if override else "release",
                 suite_hash=suite.content_hash,
                 spec_hash=version_record.spec_hash,
                 created_by=principal.user_id if principal.auth_method != "system" else None,
                 started_at=utcnow(),
+                provenance=provenance,
+                baseline_run_id=baseline.id if baseline else None,
             )
             session.add(run)
             session.flush()
@@ -352,16 +402,19 @@ class EvaluationService:
             suite = session.get(EvaluationSuite, run.suite_id)
             assert suite is not None
             cases = list(session.scalars(select(EvaluationCase).where(EvaluationCase.suite_id == suite.id)))
-            from ..storage.models import AgentVersion
-
             version = session.get(AgentVersion, version_id)
             assert version is not None
             spec = load_spec(version.spec)
             acceptance = Acceptance.model_validate(suite.acceptance)
+            baseline = self._baseline_context(session, run.baseline_run_id)
+            purpose = run.purpose
+            run_model = ModelSpec.model_validate(run.model_config_snapshot) if purpose == "comparison" else None
         results: list[dict[str, Any]] = []
         for case in cases:
-            results.append(self._run_case(principal, run_id, agent_id, version.version, spec, case))
-        summary, metrics, passed = self._summarize(results, acceptance)
+            results.append(
+                self._run_case(principal, run_id, agent_id, version.version, spec, case, acceptance, run_model)
+            )
+        summary, metrics, passed = self._summarize(results, acceptance, *baseline)
         with self.db.transaction() as session:
             run = session.get(EvaluationRun, run_id)
             assert run is not None
@@ -372,7 +425,7 @@ class EvaluationService:
                 metrics,
                 utcnow(),
             )
-        new_status = self.agents.on_evaluation(version_id, passed)
+        new_status = self.agents.on_evaluation(version_id, passed) if purpose == "release" else "unchanged"
         self.audit.record(
             "evaluation.complete",
             "evaluation_run",
@@ -380,11 +433,19 @@ class EvaluationService:
             actor_id=principal.user_id,
             workspace_id=principal.workspace_id,
             outcome="success" if passed else "failure",
-            details={"pass_rate": summary.get("pass_rate"), "version_status": new_status},
+            details={"pass_rate": summary.get("pass_rate"), "version_status": new_status, "purpose": purpose},
         )
 
     def _run_case(
-        self, principal: Principal, run_id: str, agent_id: str, version: str, spec: AgentSpec, case: EvaluationCase
+        self,
+        principal: Principal,
+        run_id: str,
+        agent_id: str,
+        version: str,
+        spec: AgentSpec,
+        case: EvaluationCase,
+        acceptance: Acceptance | None = None,
+        run_model: ModelSpec | None = None,
     ) -> dict[str, Any]:
         from ..spec.models import EvalExpectation
 
@@ -399,6 +460,8 @@ class EvaluationService:
             options: dict[str, Any] = {}
             if config.get("model_override"):
                 options["model_override"] = config["model_override"]
+            elif run_model is not None:
+                options["model_override"] = run_model.model_dump()
             if config.get("approval_decision") in {"approve", "reject"}:
                 options["auto_approval"] = config["approval_decision"]
             if config.get("fault_injection"):
@@ -428,6 +491,17 @@ class EvaluationService:
             score = groundedness(observed.get("output"), observed.get("sources", []))
             if score is not None:
                 observed["groundedness"] = score
+            judge = acceptance.judge if acceptance else None
+            if (
+                judge is not None
+                and self.gateway is not None
+                and observed.get("output") is not None
+                and (not judge.cases or case.case_key in judge.cases)
+            ):
+                # Advisory: stored beside the deterministic checks, never changes this case's result.
+                observed["judgement"] = judge_output(
+                    self.gateway, judge, objective=spec.spec.objective, case_input=case.input, output=observed["output"]
+                )
         passed = all(c["passed"] for c in checks) if checks else False
         duration = round((time.perf_counter() - started) * 1000, 2)
         with self.db.transaction() as session:
@@ -452,7 +526,11 @@ class EvaluationService:
         }
 
     def _summarize(
-        self, results: list[dict[str, Any]], acceptance: Acceptance
+        self,
+        results: list[dict[str, Any]],
+        acceptance: Acceptance,
+        baseline: list[dict[str, Any]] | None = None,
+        baseline_info: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], bool]:
         graded = [r for r in results if r["observed"].get("status") != "pending_review"]
         pending = [r["case_key"] for r in results if r["observed"].get("status") == "pending_review"]
@@ -500,13 +578,16 @@ class EvaluationService:
             "cost_usd": round(sum(u.get("cost_usd", 0.0) for u in usage), 6),
             "failure_rate": round(len(failed_status) / len(graded), 3) if graded else None,
         }
-        required_ok = all(
-            any(r["case_key"] == key and r["passed"] for r in results) for key in acceptance.required_cases
-        )
-        latency_ok = (
-            acceptance.max_avg_latency_ms is None or (metrics["avg_latency_ms"] or 0) <= acceptance.max_avg_latency_ms
-        )
-        passed = bool(graded) and pass_rate >= acceptance.min_pass_rate and required_ok and latency_ok
+        judgements = [r["observed"]["judgement"] for r in graded if r["observed"].get("judgement")]
+        if judgements:
+            scored = [j["overall"] for j in judgements if j.get("overall") is not None]
+            metrics |= {
+                "judge_score": round(statistics.fmean(scored), 3) if scored else None,
+                "judged_cases": len(judgements),
+                "judge_errors": len(judgements) - len(scored),
+                "judge_cost_usd": round(sum(j.get("cost_usd", 0.0) for j in judgements), 6),
+            }
+        gates = evaluate_gates(results, acceptance, metrics, baseline=baseline, baseline_info=baseline_info)
         summary = {
             "total": len(results),
             "graded": len(graded),
@@ -515,14 +596,108 @@ class EvaluationService:
             "pending_review": pending,
             "pass_rate": round(pass_rate, 3),
             "acceptance": acceptance.model_dump(mode="json"),
-            "acceptance_checks": {
-                "min_pass_rate": pass_rate >= acceptance.min_pass_rate,
-                "required_cases": required_ok,
-                "max_avg_latency_ms": latency_ok,
-            },
+            "acceptance_checks": gates.checks,
+            "gate_failures": gates.failures,
+            "regression": gates.regression,
             "failed_cases": [r["case_key"] for r in graded if not r["passed"]],
         }
-        return summary, metrics, passed
+        return summary, metrics, gates.passed
+
+    # ================================================================== provenance and baselines
+    def _provenance(self, spec: AgentSpec, suite: EvaluationSuite, version: str) -> dict[str, Any]:
+        """Everything needed to reproduce or explain the run: what was evaluated, with what, where."""
+        body = spec.spec
+        prompts = {
+            "instructions": body.instructions,
+            "steps": {s.id: s.prompt for s in body.workflow.steps if s.prompt},
+        }
+        return {
+            "agent": {"name": spec.metadata.name, "version": version},
+            "model": {"provider": body.model.provider, "model": body.model.model, "profile": body.model.profile},
+            "deterministic_mock_model": body.model.provider == "mock",
+            "prompt_hash": content_hash(prompts),
+            "tools": self.tool_versions(body.tool_names),
+            "components": [f"{c.kind}/{c.name}@{c.version}" for c in body.components],
+            "suite": {"name": suite.name, "version": suite.version, "hash": suite.content_hash},
+            "environment": {
+                "platform_version": __version__,
+                "python": host_platform.python_version(),
+                "database": self.db.engine.dialect.name,
+            },
+        }
+
+    @staticmethod
+    def _baseline_run(session: Any, agent_id: str, version_id: str) -> EvaluationRun | None:
+        """The approved baseline: the run that published the agent's active version (else its latest passing run)."""
+        agent = session.get(Agent, agent_id)
+        if not agent or not agent.active_version_id or agent.active_version_id == version_id:
+            return None
+        active = session.get(AgentVersion, agent.active_version_id)
+        if active is None:
+            return None
+        published_by = (active.provenance or {}).get("evaluation_run_id")
+        run = session.get(EvaluationRun, published_by) if published_by else None
+        if run is not None and run.passed:
+            return run
+        return session.scalars(
+            select(EvaluationRun)
+            .where(
+                EvaluationRun.agent_version_id == active.id,
+                EvaluationRun.status == "completed",
+                EvaluationRun.passed.is_(True),
+                EvaluationRun.purpose == "release",
+            )
+            .order_by(EvaluationRun.created_at.desc())
+            .limit(1)
+        ).first()
+
+    @staticmethod
+    def _result_records(session: Any, run_id: str) -> list[dict[str, Any]]:
+        rows = session.execute(
+            select(EvaluationResult, EvaluationCase.case_key, EvaluationCase.kind)
+            .join(EvaluationCase, EvaluationCase.id == EvaluationResult.case_id)
+            .where(EvaluationResult.run_id == run_id)
+        ).all()
+        return [
+            {
+                "case_key": key,
+                "kind": kind,
+                "passed": result.passed,
+                "observed": result.observed or {},
+                "checks": result.checks or [],
+                "duration_ms": result.duration_ms,
+            }
+            for result, key, kind in rows
+        ]
+
+    def _baseline_context(
+        self, session: Any, baseline_run_id: str | None
+    ) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+        if not baseline_run_id:
+            return None, {"baseline_run_id": None, "baseline_version_id": None, "baseline_version": None}
+        run = session.get(EvaluationRun, baseline_run_id)
+        version = session.get(AgentVersion, run.agent_version_id) if run else None
+        info = {
+            "baseline_run_id": baseline_run_id,
+            "baseline_version_id": version.id if version else None,
+            "baseline_version": version.version if version else None,
+        }
+        return (self._result_records(session, baseline_run_id) if run else None), info
+
+    def _recompute(self, run_id: str) -> tuple[bool, str]:
+        """Re-apply the gates after a human verdict. Returns (passed, agent version id)."""
+        with self.db.transaction() as session:
+            run = session.get(EvaluationRun, run_id)
+            assert run is not None
+            suite = session.get(EvaluationSuite, run.suite_id)
+            assert suite is not None
+            results = self._result_records(session, run_id)
+            baseline, info = self._baseline_context(session, run.baseline_run_id)
+            summary, metrics, passed = self._summarize(
+                results, Acceptance.model_validate(suite.acceptance), baseline, info
+            )
+            run.summary, run.metrics, run.passed = summary, metrics, passed
+            return passed, run.agent_version_id
 
     def review(
         self, principal: Principal, run_id: str, result_id: str, passed: bool, notes: str = ""
@@ -533,6 +708,17 @@ class EvaluationService:
             result = session.get(EvaluationResult, result_id)
             if not run or run.workspace_id != principal.workspace_id or not result or result.run_id != run_id:
                 raise NotFoundError("Evaluation result not found")
+            case = session.get(EvaluationCase, result.case_id)
+            if case is None or case.kind != "human_review":
+                raise ValidationFailedError(
+                    "Only human-review cases take a reviewer verdict; deterministic results cannot be overridden"
+                )
+            if run.status != "completed":
+                raise ValidationFailedError("The evaluation run has not finished")
+            version = session.get(AgentVersion, run.agent_version_id)
+            self_review = version is not None and version.created_by == principal.user_id
+            if self_review and self.settings is not None and not self.settings.allow_self_approval:
+                raise PermissionDeniedError("Separation of duties: you cannot review your own agent version")
             result.passed = passed
             result.checks = [
                 *result.checks,
@@ -544,6 +730,23 @@ class EvaluationService:
                 },
             ]
             result.observed = {**result.observed, "status": "reviewed"}
+        run_passed, version_id = self._recompute(run_id)
+        with self.db.session() as session:
+            version = session.get(AgentVersion, version_id)
+            latest = self.agents.latest_evaluation(session, version) if version else None
+        # Only the latest run for the version's exact specification moves its lifecycle status.
+        new_status = (
+            self.agents.on_evaluation(version_id, run_passed) if latest and latest.id == run_id else "unchanged"
+        )
+        self.audit.record(
+            "evaluation.review",
+            "evaluation_run",
+            run_id,
+            actor_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+            outcome="success" if passed else "failure",
+            details={"result_id": result_id, "run_passed": run_passed, "version_status": new_status},
+        )
         return self.get_run(principal, run_id)
 
     def get_run(self, principal: Principal, run_id: str) -> dict[str, Any]:
@@ -626,6 +829,95 @@ class EvaluationService:
             "regressions": regressions,
             "improvements": improvements,
         }
+
+    def release_gate(self, principal: Principal, agent_id: str, version: str | None = None) -> dict[str, Any]:
+        """Whether a version can be published now, and every reason it cannot (same rules as publish)."""
+        principal.require("evaluations:read")
+        agent, record = self.agents.load_version(principal, agent_id, version)
+        with self.db.session() as session:
+            v = session.get(AgentVersion, record.id)
+            assert v is not None
+            run = self.agents.latest_evaluation(session, v)
+            blockers = publish_blockers(
+                version_status=v.status,
+                run={"passed": run.passed, "summary": run.summary} if run else None,
+                active_version_id=agent.active_version_id,
+                version_id=v.id,
+            )
+            if v.status != "published" and self.agents.dependencies is not None:
+                blockers += self.agents.dependencies.blockers(v.id)
+            run_view = (
+                {
+                    "id": run.id,
+                    "passed": run.passed,
+                    "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                    "checks": (run.summary or {}).get("acceptance_checks", {}),
+                    "gate_failures": (run.summary or {}).get("gate_failures", []),
+                    "regression": (run.summary or {}).get("regression"),
+                    "pending_review": (run.summary or {}).get("pending_review", []),
+                    "provenance": run.provenance or {},
+                }
+                if run
+                else None
+            )
+            return {
+                "agent_id": agent.id,
+                "version": v.version,
+                "status": v.status,
+                "publishable": not blockers,
+                "blockers": blockers,
+                "evaluation": run_view,
+            }
+
+    def compare_models(
+        self,
+        principal: Principal,
+        agent_id: str,
+        models: list[dict[str, Any]],
+        *,
+        version: str | None = None,
+        suite_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Run one suite against several model configurations; comparison runs never gate publishing."""
+        principal.require("evaluations:run")
+        if not 1 <= len(models) <= 6:
+            raise ValidationFailedError("Compare between one and six model configurations")
+        _a, record = self.agents.executable_version(principal, agent_id, version, prefer_latest=True)
+        sid = suite_id or self._suite_for_version(principal, agent_id, load_spec(record.spec), None)
+        keys = (
+            "pass_rate",
+            "output_schema_compliance",
+            "correct_tool_selection",
+            "unauthorized_action_rejection",
+            "task_completion_rate",
+            "avg_latency_ms",
+            "p95_latency_ms",
+            "input_tokens",
+            "output_tokens",
+            "cost_usd",
+            "failure_rate",
+            "judge_score",
+        )
+        rows: list[dict[str, Any]] = []
+        cases: dict[str, dict[str, bool]] = {}
+        for model in models:
+            run = self.start_run(
+                principal, agent_id, version=record.version, suite_id=sid, wait=True, model_override=model
+            )
+            label = f"{run['model_config']['provider']}/{run['model_config']['model']}"
+            checks = run["summary"].get("acceptance_checks", {})
+            rows.append(
+                {
+                    "model": label,
+                    "run_id": run["id"],
+                    "gates_passed": run["passed"],
+                    "security_gates_passed": checks.get("mandatory_kinds"),
+                    "metrics": {k: run["metrics"].get(k) for k in keys},
+                }
+            )
+            for item in run["results"]:
+                cases.setdefault(item.get("case_key", item["case_id"]), {})[label] = item["passed"]
+        return {"agent_id": agent_id, "version": record.version, "suite_id": sid, "models": rows, "cases": cases}
 
     def latest_status(self, principal: Principal) -> dict[str, Any]:
         with self.db.session() as session:
