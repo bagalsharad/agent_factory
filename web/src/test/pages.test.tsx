@@ -76,4 +76,50 @@ describe("pages", () => {
     expect(await screen.findByText(/confidence 30%/)).toBeInTheDocument();
     expect(calls.some((c) => c.url === "/api/v1/agents/draft")).toBe(true);
   });
+
+  it("renders operations alerts and agent health", async () => {
+    const metrics = { executions: 4, by_status: { completed: 3, failed: 1 }, success_rate: 0.75, failure_rate: 0.25,
+      timeout_rate: 0, retry_rate: 0.25, retries: 1, p50_latency_ms: 900, p95_latency_ms: 1800, input_tokens: 100,
+      output_tokens: 20, model_calls: 4, cost_usd: 0, cost_per_execution_usd: 0, policy_violations: 2,
+      approvals: { requested: 1, approved: 1, rejected: 0, approval_rate: 1 },
+      tools: { read_pipeline_logs: { calls: 4, success_rate: 1, failed: 0, denied: 0, in_doubt: 0 } } };
+    mockApi({
+      "/api/v1/me": ME,
+      "/api/v1/operations/metrics": { window_hours: 24, workspace: metrics,
+        agents: [{ agent_id: "a1", agent: "data-pipeline-diagnostic", evaluation_pass_rate: 1, ...metrics }] },
+      "/api/v1/operations/alerts": { critical: 1, items: [{ severity: "critical", kind: "slo_breached", agent_id: "a1",
+        message: "SLO 'pipeline-success' breached" }] },
+      "/api/v1/operations/providers": { providers: [{ provider: "mock", status: "up", circuit: { state: "closed" } }], circuits: [] },
+    });
+    renderAt("/operations");
+    expect(await screen.findByText("SLO 'pipeline-success' breached")).toBeInTheDocument();
+    expect(screen.getAllByText("75%").length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "data-pipeline-diagnostic" })).toBeInTheDocument();
+  });
+
+  it("shows MCP tools as unexposed until the server is trusted", async () => {
+    mockApi({
+      "/api/v1/me": ME,
+      "/api/v1/connectors/mcp": { items: [{ id: "s1", name: "shop", transport: "stdio", command: ["python", "srv.py"],
+        url: null, env_secrets: ["SHOP_TOKEN"], auth_secret: null, trusted: false, enabled: true, tool_allowlist: [],
+        health: { status: "ok" }, tools: [{ name: "refund_order", description: "Refund", schema_valid: true, problems: [],
+          annotations: {}, risk: "high", side_effects: "write", exposed: false, platform_name: "mcp__shop__refund_order" }] }] },
+    });
+    renderAt("/connectors");
+    expect(await screen.findByText("refund_order")).toBeInTheDocument();
+    expect(screen.getByText("Trust server")).toBeInTheDocument();
+    expect(screen.getByText(/credentials from secrets: SHOP_TOKEN/)).toBeInTheDocument();
+  });
+
+  it("opens the command palette with Cmd+K and jumps to a page", async () => {
+    mockApi({ "/api/v1/me": ME, "/api/v1/agents": { items: [{ id: "a1", name: "interview-prep", display_name: "Interview Prep" }], total: 1 } });
+    renderAt("/approvals");
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    const search = await screen.findByLabelText("Search pages and agents");
+    fireEvent.change(search, { target: { value: "interview" } });
+    expect(await screen.findByText("Interview Prep")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "execution monitor" } });
+    fireEvent.keyDown(search, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByLabelText("Search pages and agents")).not.toBeInTheDocument());
+  });
 });

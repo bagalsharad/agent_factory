@@ -2,5 +2,98 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-:root { color-scheme: light dark; }
-body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --animate-rise: rise 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-fade: fade 0.2s ease-out both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+:root {
+  color-scheme: light;
+  /* chart roles (dataviz reference palette; status colors are fixed across modes) */
+  --chart-surface: #ffffff;
+  --chart-grid: #e1e0d9;
+  --chart-axis: #c3c2b7;
+  --chart-ink: #0b0b0b;
+  --chart-ink-2: #52514e;
+  --chart-muted: #898781;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --status-neutral: #b8b6ad;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-7: #6250d6;
+}
+:root.dark {
+  color-scheme: dark;
+  --chart-surface: #0f172a;
+  --chart-grid: #26324a;
+  --chart-axis: #3a4660;
+  --chart-ink: #f0efec;
+  --chart-ink-2: #c3c2b7;
+  --chart-muted: #8f97a8;
+  --status-neutral: #5b6478;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-7: #9085e9;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  background-color: #f6f7fb;
+}
+.dark body { background-color: #0b1020; }
+
+/* soft wash behind the content area */
+.app-backdrop {
+  background:
+    radial-gradient(1200px 420px at 18% -10%, rgb(99 102 241 / 0.10), transparent 60%),
+    radial-gradient(900px 380px at 95% -20%, rgb(217 70 239 / 0.07), transparent 60%);
+}
+.dark .app-backdrop {
+  background:
+    radial-gradient(1200px 420px at 18% -10%, rgb(99 102 241 / 0.18), transparent 60%),
+    radial-gradient(900px 380px at 95% -20%, rgb(217 70 239 / 0.10), transparent 60%);
+}
+
+.brand-gradient { background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #d946ef 100%); }
+.text-gradient {
+  background-image: linear-gradient(90deg, #4f46e5, #8b5cf6 60%, #c026d3);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dark .text-gradient { background-image: linear-gradient(90deg, #a5b4fc, #c4b5fd 60%, #f0abfc); }
+
+::selection { background: rgb(99 102 241 / 0.25); }
+* { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / 0.5) transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+@media (forced-colors: active) {
+  .chart-mark { forced-color-adjust: none; }
+}

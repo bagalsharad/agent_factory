@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import WorkflowGraph from "../components/WorkflowGraph";
+import { DependenciesTab, ModelComparisonCard, PolicySimulatorCard, ReleasesTab } from "./AgentReleases";
 import { Badge, Button, Card, Empty, ErrorBox, Field, inputClass, JsonView, PageHeader, Spinner, Table, Tabs, Td } from "../components/ui";
 import { post } from "../lib/api";
 import { dateTime, duration, exampleFromSchema, pct, shortId, timeAgo } from "../lib/format";
 import { useAction, useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
 
-const TABS = ["overview", "specification", "tools", "workflow", "model", "permissions", "versions", "evaluations", "executions", "run"];
+const TABS = ["overview", "specification", "tools", "workflow", "model", "permissions", "versions", "evaluations", "releases", "dependencies", "executions", "run"];
 
 export default function AgentDetail() {
   const { id } = useParams();
@@ -31,7 +32,11 @@ export default function AgentDetail() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title={<span className="flex items-center gap-3">{agent.display_name}<Badge value={latest?.status} /></span>}
+        eyebrow="Agent"
+        title={<span className="flex items-center gap-3">
+          <span className="brand-gradient grid h-9 w-9 place-items-center rounded-xl text-sm font-semibold text-white shadow-md shadow-brand-600/25">
+            {(agent.display_name || agent.name).slice(0, 1).toUpperCase()}</span>
+          {agent.display_name}<Badge value={latest?.status} /></span>}
         subtitle={<><span className="font-mono">{agent.name}</span> · latest v{latest?.version} · active {agent.active_version ? `v${agent.active_version.version}` : "none"} · template {agent.template ?? "—"}</>}
         actions={<>
           {can("agents:write") && <Link to={`/designer/${agent.id}`}><Button>Edit</Button></Link>}
@@ -54,9 +59,11 @@ export default function AgentDetail() {
       {tab === "tools" && <ToolsTab spec={spec} />}
       {tab === "workflow" && <WorkflowTab agentId={agent.id} />}
       {tab === "model" && <Card title="Model configuration"><JsonView value={spec.model} /></Card>}
-      {tab === "permissions" && <PermissionsTab spec={spec} />}
+      {tab === "permissions" && <div className="space-y-4"><PermissionsTab spec={spec} /><PolicySimulatorCard agent={agent} /></div>}
       {tab === "versions" && <VersionsTab agent={agent} onChange={reload} />}
-      {tab === "evaluations" && <EvaluationsTab agentId={agent.id} />}
+      {tab === "evaluations" && <EvaluationsTab agentId={agent.id} version={latest?.version} />}
+      {tab === "releases" && <ReleasesTab agent={agent} />}
+      {tab === "dependencies" && <DependenciesTab agent={agent} version={latest?.version} />}
       {tab === "executions" && <ExecutionsTab agentId={agent.id} />}
       {tab === "run" && <RunTab agent={agent} />}
     </div>
@@ -223,23 +230,55 @@ function VersionsTab({ agent, onChange }: { agent: any; onChange: () => void }) 
   );
 }
 
-function EvaluationsTab({ agentId }: { agentId: string }) {
+function ReleaseGateCard({ agentId, version }: { agentId: string; version?: string }) {
+  const { data: gate, error } = useApi<any>(`/api/v1/agents/${agentId}/release-gate${version ? `?version=${version}` : ""}`);
+  if (error) return <ErrorBox error={error} />;
+  if (!gate) return <Spinner />;
+  const regression = gate.evaluation?.regression;
+  return (
+    <Card title={<span className="flex items-center gap-2">Release gate · v{gate.version} <Badge value={gate.publishable ? "passed" : "failed"} /></span>}>
+      <div className="space-y-2 text-sm">
+        {gate.publishable
+          ? <p className="text-emerald-700">This version can be published.</p>
+          : <ul className="list-disc space-y-1 pl-5 text-rose-700">{gate.blockers.map((b: string) => <li key={b}>{b}</li>)}</ul>}
+        {gate.evaluation && (
+          <div className="flex flex-wrap gap-3 text-xs">
+            {Object.entries<boolean>(gate.evaluation.checks ?? {}).map(([k, v]) => <span key={k}>{k.replaceAll("_", " ")} <Badge value={v ? "passed" : "failed"} /></span>)}
+          </div>
+        )}
+        {regression && (
+          <p className="text-xs text-slate-500">
+            {regression.baseline_version ? `Compared with published v${regression.baseline_version} on ${regression.compared} case(s)` : "No published baseline yet"}
+            {regression.regressed?.length > 0 && <> · regressed: <span className="font-mono text-rose-600">{regression.regressed.join(", ")}</span> ({regression.mode})</>}
+          </p>
+        )}
+        {gate.evaluation && <Link className="text-xs text-indigo-600" to={`/evaluations/${gate.evaluation.id}`}>Latest evaluation for this specification →</Link>}
+      </div>
+    </Card>
+  );
+}
+
+function EvaluationsTab({ agentId, version }: { agentId: string; version?: string }) {
   const { data } = useApi<any>(`/api/v1/evaluations?agent_id=${agentId}`);
   return (
-    <Card title="Evaluation history">
-      <Table head={["Run", "Version", "Result", "Pass rate", "Avg latency", "Started"]} empty={!data?.items.length}>
-        {data?.items.map((r: any) => (
-          <tr key={r.id}>
-            <Td><Link className="font-mono text-indigo-600" to={`/evaluations/${r.id}`}>{shortId(r.id)}</Link></Td>
-            <Td className="font-mono text-xs">{r.agent_version}</Td>
-            <Td><Badge value={r.status === "completed" ? (r.passed ? "passed" : "failed") : r.status} /></Td>
-            <Td>{pct(r.metrics?.pass_rate)}</Td>
-            <Td>{duration(r.metrics?.avg_latency_ms)}</Td>
-            <Td className="text-xs">{timeAgo(r.created_at)}</Td>
-          </tr>
-        ))}
-      </Table>
-    </Card>
+    <div className="space-y-4">
+      <ReleaseGateCard agentId={agentId} version={version} />
+      <ModelComparisonCard agentId={agentId} />
+      <Card title="Evaluation history">
+        <Table head={["Run", "Version", "Result", "Pass rate", "Avg latency", "Started"]} empty={!data?.items.length}>
+          {data?.items.map((r: any) => (
+            <tr key={r.id}>
+              <Td><Link className="font-mono text-indigo-600" to={`/evaluations/${r.id}`}>{shortId(r.id)}</Link></Td>
+              <Td className="font-mono text-xs">{r.agent_version}</Td>
+              <Td><Badge value={r.status === "completed" ? (r.passed ? "passed" : "failed") : r.status} /></Td>
+              <Td>{pct(r.metrics?.pass_rate)}</Td>
+              <Td>{duration(r.metrics?.avg_latency_ms)}</Td>
+              <Td className="text-xs">{timeAgo(r.created_at)}</Td>
+            </tr>
+          ))}
+        </Table>
+      </Card>
+    </div>
   );
 }
 

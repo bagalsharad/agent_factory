@@ -6,6 +6,7 @@ import Agents from "./pages/Agents";
 import Approvals from "./pages/Approvals";
 import Audit from "./pages/Audit";
 import Catalog from "./pages/Catalog";
+import Connectors from "./pages/Connectors";
 import Dashboard from "./pages/Dashboard";
 import Designer from "./pages/Designer";
 import EvaluationDetail from "./pages/EvaluationDetail";
@@ -14,6 +15,7 @@ import ExecutionDetail from "./pages/ExecutionDetail";
 import Executions from "./pages/Executions";
 import Knowledge from "./pages/Knowledge";
 import Models from "./pages/Models";
+import Operations from "./pages/Operations";
 import Settings from "./pages/Settings";
 
 export function AppRoutes() {
@@ -33,6 +35,8 @@ export function AppRoutes() {
         <Route path="models" element={<Models />} />
         <Route path="catalog" element={<Catalog />} />
         <Route path="knowledge" element={<Knowledge />} />
+        <Route path="operations" element={<Operations />} />
+        <Route path="connectors" element={<Connectors />} />
         <Route path="settings" element={<Settings />} />
         <Route path="audit" element={<Audit />} />
         <Route path="*" element={<div className="py-20 text-center text-slate-500">Page not found.</div>} />

@@ -47,6 +47,25 @@ export default function EvaluationDetail() {
             {Object.entries<boolean>(s.acceptance_checks).map(([k, v]) => <span key={k}>{k.replaceAll("_", " ")} <Badge value={v ? "passed" : "failed"} /></span>)}
             {s.pending_review?.length > 0 && <span>pending human review: {s.pending_review.join(", ")}</span>}
           </div>
+          {s.gate_failures?.length > 0 && (
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-700">{s.gate_failures.map((f: string) => <li key={f}>{f}</li>)}</ul>
+          )}
+          {s.regression && (
+            <p className="mt-3 text-xs text-slate-500">
+              {s.regression.baseline_version ? `Baseline: published v${s.regression.baseline_version} (${s.regression.compared} shared case(s))` : "No published baseline to compare with"}
+              {s.regression.regressed?.length > 0 && <> · regressed: <span className="font-mono text-rose-600">{s.regression.regressed.join(", ")}</span></>}
+              {s.regression.improved?.length > 0 && <> · improved: <span className="font-mono text-emerald-600">{s.regression.improved.join(", ")}</span></>}
+              {" "}· regression mode: {s.regression.mode}
+            </p>
+          )}
+        </Card>
+      )}
+      {run.provenance && Object.keys(run.provenance).length > 0 && (
+        <Card title="Provenance">
+          {run.provenance.deterministic_mock_model && (
+            <p className="mb-2 text-xs text-amber-700">Deterministic mock model: these results validate platform behaviour, not model quality.</p>
+          )}
+          <JsonView value={run.provenance} maxHeight="16rem" />
         </Card>
       )}
       <ErrorBox error={review.error} />
