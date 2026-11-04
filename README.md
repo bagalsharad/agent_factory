@@ -47,21 +47,22 @@ Most agent prototypes let a model decide what it may do. Agent Factory inverts t
 
 ## Screenshots
 
-The dashboard at `http://127.0.0.1:8787` after `agent-factory init`, using the example agents and the built-in mock model.
+A demo instance using the bundled example agents and the built-in mock model (activity spread over the last day
+for illustration).
 
-**Dashboard**: agents, recent executions, pending approvals, runtime and model health.
+**Dashboard**: lifecycle pipeline, 24-hour trends, execution activity, recent runs, runtime and model health.
 
 ![Dashboard](docs/images/screenshots/dashboard.png)
 
 <table>
   <tr>
     <td width="50%">
-      <b>Agent Designer</b>: guided 7-step editor with live validation and a workflow preview.<br/>
-      <a href="docs/images/screenshots/agent-designer.png"><img src="docs/images/screenshots/agent-designer.png" alt="Agent Designer"/></a>
+      <b>Operations</b>: success, latency, tokens and cost, execution activity, SLO alerts and per-agent health.<br/>
+      <a href="docs/images/screenshots/operations.png"><img src="docs/images/screenshots/operations.png" alt="Operations"/></a>
     </td>
     <td width="50%">
-      <b>Agent detail</b>: spec, tools, workflow, permissions, versions and evaluations for one agent.<br/>
-      <a href="docs/images/screenshots/agent-detail.png"><img src="docs/images/screenshots/agent-detail.png" alt="Agent detail"/></a>
+      <b>Releases</b>: what runs in each environment, a production canary at 20%, promotion, rollback and history.<br/>
+      <a href="docs/images/screenshots/agent-detail.png"><img src="docs/images/screenshots/agent-detail.png" alt="Agent releases"/></a>
     </td>
   </tr>
   <tr>
@@ -75,9 +76,13 @@ The dashboard at `http://127.0.0.1:8787` after `agent-factory init`, using the e
     </td>
   </tr>
   <tr>
-    <td colspan="2">
-      <b>Evaluation Lab</b>: per-case results, metrics and acceptance gates that decide whether a version can be published.<br/>
+    <td width="50%">
+      <b>Evaluation Lab</b>: per-case results, metrics and the release gates that decide whether a version can be published.<br/>
       <a href="docs/images/screenshots/evaluation-lab.png"><img src="docs/images/screenshots/evaluation-lab.png" alt="Evaluation Lab"/></a>
+    </td>
+    <td width="50%">
+      <b>Agent Designer</b>: guided 7-step editor with live validation and a workflow preview.<br/>
+      <a href="docs/images/screenshots/agent-designer.png"><img src="docs/images/screenshots/agent-designer.png" alt="Agent Designer"/></a>
     </td>
   </tr>
 </table>
