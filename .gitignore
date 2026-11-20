@@ -37,4 +37,9 @@ secrets.enc
 *.swp
 
 # Machine-specific editor reports
-.claude/cloude-code-toolbox-mcp-skills-awareness.md
+
+# Local AI-assistant context files (written by editor extensions; not part of the project)
+CLAUDE.md
+AGENTS.md
+.claude/
+.Codex/
