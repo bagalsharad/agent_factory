@@ -101,6 +101,7 @@ class ExecutionContext:
     persist_usage: Callable[[dict[str, Any]], None] = lambda usage: None
     depth: int = 0
     conversation_session_id: str | None = None
+    continuity: dict[str, Any] = field(default_factory=dict)  # ACE: environment + intent version for this run
 
     @property
     def model(self) -> ModelSpec:
@@ -143,6 +144,25 @@ def validate_output(value: Any, schema: dict[str, Any], rules: list[dict[str, An
 
 class Harness(ABC):
     """Execution strategy interface. Each method returns a LangGraph state update."""
+
+    continuity: Any = None  # ACE ContinuityService (records a semantic checkpoint after every step)
+    in_doubt_guard: bool = True  # never repeat an interrupted side-effecting call (off only in baseline experiments)
+
+    def record_step(
+        self,
+        ctx: ExecutionContext,
+        step: WorkflowStep,
+        kind: str,
+        node_id: str,
+        state: dict[str, Any],
+        update: dict[str, Any],
+    ) -> None:
+        if self.continuity is None or not ctx.continuity:
+            return
+        try:
+            self.continuity.record(ctx, step, kind, node_id, state, update)
+        except Exception:  # continuity bookkeeping must never fail the step it describes
+            log.exception("failed to record continuity checkpoint", extra={"step": step.id})
 
     # ================================================================== node wrapper
     def run_node(
@@ -1017,7 +1037,12 @@ class GovernedHarness(Harness):
 
         tool = self._resolve_tool(ctx, tool_name)
         definition = tool.definition if tool else None
-        if existing and existing.status in IN_DOUBT and not (definition and definition.idempotent):
+        if (
+            self.in_doubt_guard
+            and existing
+            and existing.status in IN_DOUBT
+            and not (definition and definition.idempotent)
+        ):
             self._mark_in_doubt(ctx, key, step_id, tool_name, existing)
         safe_args = redact(arguments)
         base = {

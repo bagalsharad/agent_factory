@@ -94,6 +94,7 @@ class ModelInfo(BaseModel):
     size_bytes: int | None = None
     details: dict[str, Any] = Field(default_factory=dict)
     local: bool = True
+    digest: str | None = Field(None, description="Content digest of the model weights when the provider reports one")
 
 
 class ProviderHealth(BaseModel):

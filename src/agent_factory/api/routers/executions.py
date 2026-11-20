@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
@@ -145,6 +145,54 @@ def resolve_in_doubt(
 ) -> dict[str, Any]:
     return platform.executions.resolve_in_doubt(
         principal, execution_id, invocation_id, performed=payload.performed, note=payload.note, resume=payload.resume
+    )
+
+
+class ContinuityDecision(BaseModel):
+    decision: Literal["resume", "replay", "replan", "cancel"]
+    from_step: str | None = Field(None, description="replay: the step to redo from")
+    note: str = Field(min_length=5, max_length=2000, description="Why (recorded in the audit log)")
+
+
+class IntentAmendment(BaseModel):
+    reason: str = Field(min_length=5, max_length=2000)
+    input: dict[str, Any] | None = Field(None, description="New task input (changes the goals: the work is re-planned)")
+    limits: dict[str, Any] | None = Field(None, description="Tighter execution limits")
+
+
+@router.get("/{execution_id}/continuity", summary="ACE: intent ledger, execution state graph and assessments")
+def continuity(execution_id: str, platform: PlatformDep, principal: PrincipalDep) -> dict[str, Any]:
+    return platform.continuity.view(principal, execution_id)
+
+
+@router.post(
+    "/{execution_id}/continuity/assess", summary="ACE: assess continuity now (changes, findings, SCS, decision)"
+)
+def assess_continuity(
+    execution_id: str, platform: PlatformDep, principal: PrincipalDep, persist: bool = False
+) -> dict[str, Any]:
+    principal.require("executions:recover" if persist else "executions:read")
+    platform.executions.get(principal, execution_id)  # workspace check
+    return platform.continuity.assess(
+        execution_id, trigger="manual", persist=persist, decided_by=principal.user_id if persist else None
+    )
+
+
+@router.post("/{execution_id}/continuity/decision", summary="ACE: operator decision for an execution held for review")
+def continuity_decision(
+    execution_id: str, payload: ContinuityDecision, platform: PlatformDep, principal: PrincipalDep
+) -> dict[str, Any]:
+    return platform.executions.continuity_decision(
+        principal, execution_id, decision=payload.decision, from_step=payload.from_step, note=payload.note
+    )
+
+
+@router.post("/{execution_id}/intent", summary="ACE: amend the intent (new version; authorized and audited)")
+def amend_intent(
+    execution_id: str, payload: IntentAmendment, platform: PlatformDep, principal: PrincipalDep
+) -> dict[str, Any]:
+    return platform.executions.amend_intent(
+        principal, execution_id, reason=payload.reason, task_input=payload.input, limits=payload.limits
     )
 
 

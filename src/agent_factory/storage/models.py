@@ -266,6 +266,73 @@ class Deployment(TimestampMixin, Base):
     ended_at: Mapped[datetime | None] = mapped_column(default=None)
 
 
+class ExecutionIntent(Base):
+    """Intent Ledger (ACE): the authoritative, versioned objective of one execution.
+
+    Version 1 is written when the execution is created. Later versions are explicit, authorized amendments.
+    """
+
+    __tablename__ = "execution_intents"
+    __table_args__ = (UniqueConstraint("execution_id", "version"),)
+    id: Mapped[str] = _id_col()
+    execution_id: Mapped[str] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    intent: Mapped[dict[str, Any]] = mapped_column()
+    intent_hash: Mapped[str] = mapped_column(String(64))
+    goals_hash: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class StepRecord(Base):
+    """Execution State Graph node + semantic checkpoint (ACE): what a step depended on, under which
+    environment it ran, what it produced and which side effects it committed."""
+
+    __tablename__ = "step_records"
+    __table_args__ = (Index("ix_step_records_execution_step", "execution_id", "step_id"),)
+    id: Mapped[str] = _id_col()
+    execution_id: Mapped[str] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), index=True)
+    step_id: Mapped[str] = mapped_column(String(120))
+    node_id: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(30))
+    seq: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20))  # completed | failed | rejected
+    validity: Mapped[str] = mapped_column(String(20), default="valid")  # valid | revalidated | invalidated
+    depends_on: Mapped[dict[str, Any]] = mapped_column(default=dict)  # {"input": bool, "steps": [...]}
+    intent_version: Mapped[int] = mapped_column(Integer, default=1)
+    environment: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    input_digest: Mapped[str] = mapped_column(String(64))
+    output_digest: Mapped[str] = mapped_column(String(64))
+    evidence: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    side_effects: Mapped[list[Any]] = mapped_column(default=list)
+    invalidated_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class ContinuityAssessment(Base):
+    """Continuity Validator + Recovery Decision Engine output (ACE), kept as an append-only record."""
+
+    __tablename__ = "continuity_assessments"
+    id: Mapped[str] = _id_col()
+    execution_id: Mapped[str] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"))
+    trigger: Mapped[str] = mapped_column(String(20))  # recover | resume | manual | intent
+    intent_version: Mapped[int] = mapped_column(Integer)
+    environment: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    changes: Mapped[list[Any]] = mapped_column(default=list)
+    affected_steps: Mapped[list[Any]] = mapped_column(default=list)
+    findings: Mapped[list[Any]] = mapped_column(default=list)
+    scores: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    decision: Mapped[str] = mapped_column(String(30))
+    from_step: Mapped[str | None] = mapped_column(String(120), default=None)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20))  # applied | needs_review | overridden | preview
+    decided_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class DependencyEdge(Base):
     """What a built agent version depends on, resolved at build time (tool and component versions included).
 

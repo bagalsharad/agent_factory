@@ -896,3 +896,82 @@ def audit_verify_export(path: Path) -> None:
         result = verify_records(json.loads(line) for line in handle if line.strip())
     console.print_json(data=result)
     raise typer.Exit(0 if result["valid"] else 1)
+
+
+continuity_app = typer.Typer(help="Agentic Continuity Engineering (ACE).", no_args_is_help=True)
+app.add_typer(continuity_app, name="continuity")
+
+
+@continuity_app.command("benchmark")
+def continuity_benchmark(
+    runs: Annotated[int, typer.Option(min=1, max=50, help="Runs per scenario and mode")] = 1,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Write the full results as JSON")] = None,
+) -> None:
+    """Conventional checkpoint-and-retry vs ACE across six failure scenarios (isolated, deterministic mock model)."""
+    from ..continuity.benchmark import run_benchmark
+
+    result = run_benchmark(runs=runs)
+    table = Table(title=f"Continuity benchmark ({runs} run(s) per scenario, {result['model']})")
+    table.add_column("Scenario")
+    for mode in ("baseline", "ace"):
+        table.add_column(mode)
+    for scenario in dict.fromkeys(r["scenario"] for r in result["results"]):
+        cells = []
+        for mode in ("baseline", "ace"):
+            row = next(r for r in result["results"] if r["scenario"] == scenario and r["mode"] == mode)
+            verdict = "correct" if row["recovery_correct"] else "escalated" if row["escalated"] else "INCORRECT"
+            decision = row["decision"] or "-"
+            if mode == "baseline":
+                decision = f"ACE would: {decision}"  # assessed after the conventional recovery finished
+            cells.append(f"{verdict} · {decision} · unsafe {row['unsafe_actions']} · SCS {row['scs']}")
+        table.add_row(scenario, *cells)
+    console.print(table)
+    metrics = Table(title="Metrics")
+    metrics.add_column("Metric")
+    metrics.add_column("baseline")
+    metrics.add_column("ace")
+    for key in result["summary"]["baseline"]:
+        metrics.add_row(key, str(result["summary"]["baseline"][key]), str(result["summary"]["ace"][key]))
+    console.print(metrics)
+    if output:
+        output.write_text(json.dumps(result, indent=2, default=str))
+        console.print(f"results written to {output}")
+
+
+@continuity_app.command("demo")
+def continuity_demo(
+    port: Annotated[int, typer.Option(help="Port for the demo dashboard")] = 8899,
+    data_dir: Annotated[Path | None, typer.Option(help="Where the demo keeps its data")] = None,
+    reset: Annotated[bool, typer.Option(help="Delete the demo data and seed again")] = False,
+) -> None:
+    """Serve a separate demo instance with ACE scenarios (replayed, held for review, in doubt, intent amendment)."""
+    import uvicorn
+
+    from ..api.app import create_app
+    from ..continuity.demo import build_demo, demo_settings
+    from ..platform import create_platform
+
+    directory = (data_dir or Path.home() / ".agent-factory-ace-demo").expanduser()
+    if reset and directory.exists():
+        shutil.rmtree(directory)
+    settings = demo_settings(directory, port)
+    platform = create_platform(settings)
+    scenarios = build_demo(platform)
+    table = Table(title=f"ACE demo — http://127.0.0.1:{port}  (data: {directory})")
+    table.add_column("Scenario")
+    table.add_column("Status")
+    table.add_column("Open")
+    for item in scenarios:
+        table.add_row(
+            f"{item['title']}\n[dim]{item['hint']}[/dim]",
+            item["status"],
+            f"http://127.0.0.1:{port}/executions/{item['execution_id']}",
+        )
+    console.print(table)
+    uvicorn.run(
+        create_app(settings, platform_instance=platform, start_workers=True),
+        host="127.0.0.1",
+        port=port,
+        log_config=None,
+        server_header=False,
+    )

@@ -52,6 +52,13 @@ class ToolOutcomeUnknownError(AgentFactoryError):
     code = "in_doubt"
 
 
+class ContinuityHoldError(AgentFactoryError):
+    """ACE escalated a recovery: continuing could break the execution's intent or repeat a committed action."""
+
+    status_code = 409
+    code = "continuity_review"
+
+
 class InvalidStateError(AgentFactoryError):
     """An operation is not allowed in the resource's current lifecycle state."""
 

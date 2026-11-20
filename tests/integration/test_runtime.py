@@ -147,11 +147,23 @@ def test_revoked_requester_cannot_resume(platform: Platform, remediation_agent: 
         session.execute(update(Membership).where(Membership.user_id == operator.user_id).values(role="viewer"))
     platform.approvals.decide(platform_admin, approval["id"], "approved")
     done = platform.executions.run_now(paused["id"])
-    # the requester is now a viewer: the restart is denied by RBAC at execution time
+    # the requester is now a viewer. Continuity assessment runs before resuming: the work already done is no
+    # longer authorized for this requester, so the execution is held for review and the restart never runs.
     with platform.db.session() as session:
         restart = session.scalars(select(ToolInvocation).where(ToolInvocation.execution_id == paused["id"],
                                                                ToolInvocation.tool_name == "restart_pipeline",
                                                                ToolInvocation.tool_call_id != "approval")).one()
+    assert restart.status != "completed"
+    assert done["status"] == "needs_review" and done["error"]["code"] == "continuity_review"
+
+    # Without continuity assessment, RBAC still denies the restart at execution time.
+    platform.settings.continuity_enabled = False
+    with platform.db.transaction() as session:
+        record = session.get(Execution, paused["id"])
+        record.status, record.pending_action = "queued", "resume"
+    done = platform.executions.run_now(paused["id"])
+    with platform.db.session() as session:
+        restart = session.get(ToolInvocation, restart.id)
     assert restart.status == "denied" and done["status"] == "failed"
 
 

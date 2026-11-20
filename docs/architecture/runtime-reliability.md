@@ -65,3 +65,6 @@ read-only specialists, cancellation propagates to children, each child is its ow
 - Child executions run inline in the parent's worker; their timeout is checked between steps, not preemptively.
 - An in-flight delegation interrupted by a crash is re-run (specialists are read-only, so this is safe today).
 - Graceful shutdown relies on heartbeat recovery for executions that were running.
+
+See also [Agentic Continuity Engineering](agentic-continuity.md): before any recovery or resume the platform
+checks that the intent and environment still hold and replays only the affected steps.

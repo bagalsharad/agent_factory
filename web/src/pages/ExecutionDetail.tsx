@@ -7,6 +7,7 @@ import { post } from "../lib/api";
 import { ACTIVE_STATUSES, dateTime, duration, shortId } from "../lib/format";
 import { useAction, useApi } from "../lib/hooks";
 import { useSession } from "../lib/session";
+import { ContinuityPanel } from "../components/ContinuityPanel";
 
 export default function ExecutionDetail() {
   const { id } = useParams();
@@ -129,6 +130,7 @@ export default function ExecutionDetail() {
           </Card>
         </div>
       )}
+      {!execution.parent_execution_id && <ContinuityPanel executionId={execution.id} status={execution.status} onChange={reload} />}
       <Card title={`Timeline (${events?.items.length ?? 0} events)`}>
         {events ? <Timeline events={events.items} onSelectNode={setSelected} /> : <Spinner />}
       </Card>

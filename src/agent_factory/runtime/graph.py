@@ -49,7 +49,9 @@ def compile_workflow(spec: AgentSpec, harness: Harness, ctx: ExecutionContext, c
         step: WorkflowStep, kind: str, fn: Callable[..., dict[str, Any]]
     ) -> Callable[[dict[str, Any]], dict[str, Any]]:
         def run(state: dict[str, Any]) -> dict[str, Any]:
-            return harness.run_node(ctx, node_id(step, kind), kind, lambda: fn(ctx, state, step), step)
+            update = harness.run_node(ctx, node_id(step, kind), kind, lambda: fn(ctx, state, step), step)
+            harness.record_step(ctx, step, kind, node_id(step, kind), state, update)  # ACE semantic checkpoint
+            return update
 
         return run
 

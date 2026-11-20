@@ -90,6 +90,7 @@ class OllamaProvider(ModelProvider):
                 size_bytes=m.get("size"),
                 details=m.get("details", {}),
                 context_window=self._context_window(m["name"]),
+                digest=m.get("digest"),
             )
             for m in models
         ]

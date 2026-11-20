@@ -62,6 +62,7 @@ Per-agent secrets for connectors are stored through the secret backend (`AF_SECR
 | `AF_MCP_CONFIG_FILE` | `null` |  |
 | `AF_DOCUMENT_DIRS` | `["~/Documents", "~/Downloads", "~/Desktop"]` | Folders the Interview Prep agent may read resumes, job descriptions and feedback from |
 | `AF_INTERVIEW_PREP_DIR` | `~/Documents/InterviewPrep` | Where the Interview Prep agent writes `resume.docx`, `resume.pdf` and `prep-guide.md` |
+| `AF_CONTINUITY_ENABLED` | `true` | Agentic Continuity Engineering: assess intent and environment before every recovery and resume |
 | `AF_MAX_EXECUTION_ATTEMPTS` | `3` | Worker crashes tolerated per execution before it is dead-lettered for an operator |
 | `AF_CIRCUIT_FAILURE_THRESHOLD` | `5` | Consecutive failures that open a model-provider or network/MCP tool circuit |
 | `AF_CIRCUIT_RECOVERY_SECONDS` | `30.0` | How long a circuit stays open before one trial call |

@@ -56,7 +56,7 @@ const STATUS_TONE: Record<string, Tone> = {
   approved: "brand", reviewed: "brand",
   running: "info", testing: "info", validating: "info", queued: "neutral", draft: "neutral",
   waiting_approval: "warn", pending: "warn", awaiting_approval: "warn", require_approval: "warn", pending_review: "warn",
-  pending_approval: "warn", degraded: "warn", warning: "warn", medium: "warn", in_doubt: "warn",
+  pending_approval: "warn", needs_review: "warn", degraded: "warn", warning: "warn", medium: "warn", in_doubt: "warn",
   deprecated: "warn", superseded: "neutral", disabled: "neutral", cancelled: "neutral", expired: "neutral", retired: "neutral",
   low: "neutral", unknown: "neutral", reset: "neutral",
   failed: "bad", rejected: "bad", denied: "bad", deny: "bad", budget_exceeded: "bad", down: "bad", fail: "bad", error: "bad",

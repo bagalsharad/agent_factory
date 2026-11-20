@@ -272,6 +272,8 @@ class MockProvider(ModelProvider):
     def __init__(self) -> None:
         self._flaky_seen: set[str] = set()
         self._lock = threading.Lock()
+        # Stands in for the weights digest real providers report; bump it to simulate a model upgrade.
+        self.revision = "1"
 
     # ------------------------------------------------------------------ metadata
     def list_models(self) -> list[ModelInfo]:
@@ -282,6 +284,7 @@ class MockProvider(ModelProvider):
                 capabilities=self.capabilities(name),
                 context_window=128_000,
                 details={"description": desc, "deterministic": True},
+                digest=f"mock:{name}:r{self.revision}",
             )
             for name, desc in MOCK_MODELS.items()
         ]

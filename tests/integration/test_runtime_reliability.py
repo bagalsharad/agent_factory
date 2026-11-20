@@ -94,12 +94,14 @@ def invocation(platform: Platform, execution_id: str) -> ToolInvocation:
 def test_interrupted_side_effect_is_never_repeated(platform: Platform, admin: Principal, charge_agent: str) -> None:
     execution_id = crash_mid_call(platform, admin, charge_agent)
     result = platform.executions.get(admin, execution_id)
-    assert result["status"] == "failed" and result["error"]["code"] == "in_doubt"
+    # Continuity assessment catches the interrupted charge before anything runs and holds the execution.
+    assert result["status"] == "needs_review" and result["error"]["code"] == "continuity_review"
     assert ChargeCard.charges == [42]  # recovery did not charge again
     assert invocation(platform, execution_id).status == "in_doubt"
     platform.executions.retry(admin, execution_id)  # a plain retry still refuses to guess
     platform.executions.run_now(execution_id)
-    assert ChargeCard.charges == [42] and platform.executions.get(admin, execution_id)["error"]["code"] == "in_doubt"
+    assert ChargeCard.charges == [42]
+    assert platform.executions.get(admin, execution_id)["error"]["code"] == "continuity_review"
 
     developer = add_user(platform, "dev", "developer")
     with pytest.raises(PermissionDeniedError):

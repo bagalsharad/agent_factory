@@ -14,6 +14,9 @@ from sqlalchemy import select
 
 from .builder.builder import AgentBuilder
 from .connectors.service import MCPService
+from .continuity.fingerprint import EnvironmentProbe
+from .continuity.ledger import IntentLedger
+from .continuity.service import ContinuityService
 from .core.circuit import CircuitRegistry
 from .core.config import Settings, WorkerMode, get_settings
 from .core.ids import content_hash
@@ -121,6 +124,20 @@ class Platform:
             policy=self.policy,
             conversation=self.conversation,
         )
+        # Agentic Continuity Engineering: intent ledger, semantic checkpoints, continuity-aware recovery
+        self.continuity = ContinuityService(
+            self.db,
+            self.audit,
+            s,
+            self.tools,
+            self.policy,
+            EnvironmentProbe(self.db, self.tools, self.gateway, s, resolver=self.agents.resolver),
+            IntentLedger(self.db, self.audit),
+            self.executions.checkpointer,
+        )
+        self.continuity.principal_for = self.executions._principal
+        self.executions.continuity = self.continuity
+        self.harness.continuity = self.continuity
         self.operations = OperationsService(self.db, self.audit, self.gateway, self.circuits)
         self.evaluations = EvaluationService(
             self.db,

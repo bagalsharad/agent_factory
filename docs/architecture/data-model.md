@@ -30,7 +30,7 @@ Indexes back the common access paths: executions by workspace+status, agent+crea
 evaluation runs by version+created_at; unique constraints on names per workspace, versions per agent, idempotency
 keys and component/template name+version.
 
-## Added for production (migrations 0003–0008)
+## Added for production (migrations 0003–0009)
 
 | Migration | Change |
 |---|---|
@@ -40,6 +40,7 @@ keys and component/template name+version.
 | 0006 | `executions.trace_id`; `slo_definitions`; `cost_budgets` |
 | 0007 | `mcp_servers`; `secret_refs.version` |
 | 0008 | `agent_artifacts`, `deployment_environments`, `deployments` |
+| 0009 | `execution_intents` (Intent Ledger), `step_records` (state graph + semantic checkpoints), `continuity_assessments` (ACE) |
 
 All additive with defaults; existing rows need no backfill except dependency edges, which the platform records on
 start-up for built versions that have none.

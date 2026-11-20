@@ -101,6 +101,9 @@ class Settings(BaseSettings):
         5, ge=1, le=100, description="Consecutive failures that open a model-provider or network-tool circuit"
     )
     circuit_recovery_seconds: float = Field(30.0, gt=0, le=3600, description="How long a circuit stays open")
+    continuity_enabled: bool = Field(
+        True, description="Agentic Continuity Engineering: assess intent and environment before every recovery"
+    )
     max_execution_attempts: int = Field(
         3, ge=1, le=50, description="Worker crashes tolerated per execution before it is dead-lettered for an operator"
     )

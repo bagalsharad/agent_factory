@@ -26,6 +26,7 @@ from ..core.errors import (
     AgentFactoryError,
     BudgetExceededError,
     ConflictError,
+    ContinuityHoldError,
     ExecutionCancelledError,
     InvalidStateError,
     NotFoundError,
@@ -62,7 +63,7 @@ from .graph import compile_workflow
 log = get_logger(__name__)
 
 TERMINAL = {"completed", "failed", "cancelled", "budget_exceeded", "rejected", "dead_lettered"}
-RECOVERABLE = {"failed", "dead_lettered"}
+RECOVERABLE = {"failed", "dead_lettered", "needs_review"}
 ACTIVE = {"queued", "running", "waiting_approval"}
 OPTION_KEYS = {
     "session_id",
@@ -134,6 +135,7 @@ class ExecutionService:
         self.checkpointer = SqlCheckpointSaver(db)
         self.budget_guard: Callable[[str, str], None] | None = None  # workspace/agent cost budgets (operations)
         self.deployment_resolver: Callable[[str, str, str, str], dict[str, Any]] | None = None
+        self.continuity: Any = None  # ACE ContinuityService, set by the platform
         self.wakeup: threading.Event = threading.Event()
         harness.delegate_runner = self._run_child
         approvals.on_decided = lambda execution_id, _approval_id: self.enqueue_resume(execution_id)
@@ -227,6 +229,17 @@ class ExecutionService:
                 execution.attempt = 1
             session.add(execution)
             session.flush()
+            if self.continuity is not None:  # Intent Ledger v1: what this execution was asked to achieve
+                from ..continuity.ledger import build_intent
+
+                limits = {**spec.spec.execution_limits.model_dump(), **(options.get("limits_override") or {})}
+                self.continuity.ledger.create(
+                    session,
+                    execution,
+                    build_intent(
+                        spec, input_data, requested_by=execution.requested_by, role=principal.role, limits=limits
+                    ),
+                )
             result = execution_dict(execution)
         EventRecorder(self.db, result["id"], capture_content=self._capture(spec)).emit(
             "execution.queued", status="queued", agent=agent.name, version=version_record.version, mode=mode
@@ -423,6 +436,7 @@ class ExecutionService:
             version_record = session.get(AgentVersion, execution.agent_version_id)
             assert version_record is not None
             spec = load_spec(version_record.spec)
+            version_spec_hash = version_record.spec_hash
         override = (execution.options or {}).get("limits_override")
         if override:
             from ..spec.models import ExecutionLimits
@@ -465,6 +479,11 @@ class ExecutionService:
             else:
                 ctx.events.emit("execution.recovering", status="running", reason=action, attempt=execution.attempt)
                 payload = None
+            if self.continuity is not None:
+                if action in {"recover", "resume"} and depth == 0 and self.continuity.enabled:
+                    payload, config = self._continuity_gate(execution, spec, graph, config, payload, action, ctx)
+                # snapshot after the gate, so replayed steps record the environment they actually run under
+                ctx.continuity = self.continuity.run_context(execution, spec, version_spec_hash)
             with span(
                 "agent.execution",
                 execution_id=execution.id,
@@ -519,6 +538,9 @@ class ExecutionService:
             ctx.events.emit("budget.exceeded", status=status, limit="max_steps")
         except ExecutionCancelledError:
             status, error = "cancelled", {"code": "cancelled", "message": "Execution cancelled"}
+        except ContinuityHoldError as exc:
+            status, error = "needs_review", {"code": exc.code, "message": exc.message, "details": exc.details}
+            ctx.events.emit("continuity.escalated", status="needs_review", **(exc.details or {}))
         except AgentFactoryError as exc:
             status, error = "failed", {"code": exc.code, "message": exc.message, "details": exc.details}
         except Exception as exc:  # last line of defence: controlled outcome, no internals leaked
@@ -536,6 +558,8 @@ class ExecutionService:
             record.worker_id = None
             if terminal:
                 record.output, record.error, record.finished_at = output, error, utcnow()
+            elif status == "needs_review":
+                record.error = error
             session.flush()
             session.expunge(record)
         if terminal:
@@ -656,7 +680,7 @@ class ExecutionService:
             if not execution or execution.workspace_id != principal.workspace_id:
                 raise NotFoundError("Execution not found")
             if execution.status not in RECOVERABLE:
-                raise InvalidStateError("Only failed or dead-lettered executions can be recovered")
+                raise InvalidStateError("Only failed, dead-lettered or held executions can be recovered")
             if execution.status == "dead_lettered":  # an operator decided to try again: fresh attempt budget
                 principal.require("executions:recover")
                 execution.attempt = 0
@@ -708,6 +732,140 @@ class ExecutionService:
         if ids:
             self.wakeup.set()
         return len(ids)
+
+    def _continuity_gate(
+        self,
+        execution: Execution,
+        spec: AgentSpec,
+        graph: Any,
+        config: dict[str, Any],
+        payload: Any,
+        action: str,
+        ctx: ExecutionContext,
+    ) -> tuple[Any, dict[str, Any]]:
+        """ACE: before resuming work, check the intent and environment still hold, then resume, replay the
+        affected steps, re-plan, or hold the execution for an operator (ContinuityHoldError)."""
+        assert self.continuity is not None
+        override = (execution.options or {}).get("continuity_override")
+        if override:
+            with self.db.transaction() as session:
+                record = session.get(Execution, execution.id)
+                assert record is not None
+                record.options = {k: v for k, v in (record.options or {}).items() if k != "continuity_override"}
+            plan = {
+                "decision": override["decision"],
+                "from_step": override.get("from_step"),
+                "id": override.get("assessment_id"),
+                "rationale": "operator decision",
+            }
+        else:
+            plan = self.continuity.assess(execution.id, trigger=action)
+        ctx.events.emit(
+            "continuity.assessed",
+            status=plan["decision"],
+            decision=plan["decision"],
+            from_step=plan.get("from_step"),
+            assessment_id=plan.get("id"),
+            scs=(plan.get("scores") or {}).get("scs"),
+            rationale=plan.get("rationale"),
+        )
+        decision = plan["decision"]
+        if decision == "escalate":
+            raise ContinuityHoldError(
+                f"Recovery paused for review: {plan.get('rationale')}",
+                details={"assessment_id": plan.get("id"), "from_step": plan.get("from_step")},
+            )
+        if decision in {"resume", "revalidate_resume"}:
+            if decision == "revalidate_resume":
+                self.continuity.mark_revalidated(execution.id)
+            return payload, config
+        thread = {"configurable": {"thread_id": execution.id}}
+        if decision == "replay" and plan.get("from_step"):
+            target = self.continuity.checkpoint_before(graph, thread, plan["from_step"])
+            if target is not None:
+                self.continuity.invalidate_from(execution.id, spec, plan["from_step"], plan.get("id"))
+                ctx.events.emit("continuity.replay", status="running", from_step=plan["from_step"])
+                return None, {**config, "configurable": target["configurable"]}
+        # replan (or a replay with no usable checkpoint): redo the workflow from the start under the current intent
+        self.continuity.invalidate_from(execution.id, spec, None, plan.get("id"))
+        ctx.events.emit("continuity.replan", status="running")
+        fresh = {"input": execution.input, "steps": {}, "loops": {}, "pending": {}, "iterations": {}}
+        return fresh, config
+
+    def continuity_decision(
+        self, principal: Principal, execution_id: str, *, decision: str, from_step: str | None = None, note: str = ""
+    ) -> dict[str, Any]:
+        """An operator decides how an escalated execution continues (resume, replay from a step, re-plan, cancel)."""
+        principal.require("executions:recover")
+        if decision not in {"resume", "replay", "replan", "cancel"}:
+            raise ValidationFailedError("decision is resume, replay, replan or cancel")
+        if len(note.strip()) < 5:
+            raise ValidationFailedError("Explain the decision (it is recorded in the audit log)")
+        with self.db.session() as session:
+            execution = session.get(Execution, execution_id)
+            if not execution or execution.workspace_id != principal.workspace_id:
+                raise NotFoundError("Execution not found")
+            if execution.status not in {"needs_review", "failed", "dead_lettered"}:
+                raise InvalidStateError("Only executions held for review, failed or dead-lettered take a decision")
+        if decision == "cancel":
+            return self.cancel(principal, execution_id)
+        if self.continuity is None:
+            raise InvalidStateError("Continuity engineering is not available")
+        assessment_id = self.continuity.record_override(
+            execution_id,
+            decision=decision,
+            from_step=from_step,
+            decided_by=principal.user_id,
+            note=note,
+            workspace_id=principal.workspace_id,
+        )
+        with self.db.transaction() as session:
+            record = session.get(Execution, execution_id)
+            assert record is not None
+            record.options = {
+                **(record.options or {}),
+                "continuity_override": {"decision": decision, "from_step": from_step, "assessment_id": assessment_id},
+            }
+            record.status, record.pending_action, record.queued_at = "queued", "recover", utcnow()
+            record.error, record.finished_at = None, None
+            session.flush()
+            result = execution_dict(record)
+        self.audit.record(
+            "continuity.decision",
+            "execution",
+            execution_id,
+            actor_id=principal.user_id,
+            workspace_id=principal.workspace_id,
+            details={"decision": decision, "from_step": from_step, "assessment_id": assessment_id, "note": note[:300]},
+        )
+        self.wakeup.set()
+        return result
+
+    def amend_intent(
+        self,
+        principal: Principal,
+        execution_id: str,
+        *,
+        reason: str,
+        task_input: dict[str, Any] | None = None,
+        limits: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if self.continuity is None:
+            raise InvalidStateError("Continuity engineering is not available")
+        with self.db.session() as session:
+            execution = session.get(Execution, execution_id)
+            if not execution or execution.workspace_id != principal.workspace_id:
+                raise NotFoundError("Execution not found")
+            from ..storage.models import AgentVersion
+
+            version = session.get(AgentVersion, execution.agent_version_id)
+            assert version is not None
+            spec = load_spec(version.spec)
+            session.expunge(execution)
+        amended = self.continuity.ledger.amend(
+            principal, execution, spec, reason=reason, task_input=task_input, limits=limits
+        )
+        return {"intent": amended, "preview": self.continuity.assess(execution_id, trigger="intent", persist=False)}
 
     def _record_trace_id(self, execution_id: str) -> None:
         """The OpenTelemetry trace id of the first run; a W3C-format id when no tracer is configured, so every
@@ -793,7 +951,8 @@ class ExecutionService:
                 or invocation.execution_id != execution_id
             ):
                 raise NotFoundError("Tool invocation not found")
-            if invocation.status not in {"in_doubt", "pending"} or execution.status not in TERMINAL:
+            stopped = execution.status in TERMINAL or execution.status == "needs_review"
+            if invocation.status not in {"in_doubt", "pending"} or not stopped:
                 raise InvalidStateError("Only in-doubt tool calls of a stopped execution can be resolved")
             resolution = {
                 "by": principal.user_id,
